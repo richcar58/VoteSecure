@@ -2,6 +2,19 @@
 
 This change log lists changes to VoteSecure with each released version. It is not comprehensive (i.e., it does not include non-material changes like fixes for typographical errors, updates to the continuous integration scripts, etc.).
 
+## [Version 1.3](https://github.com/FreeAndFair/VoteSecure/releases/tag/v1_3) - 15 May 2026
+
+- added documentation (in the CONOPS and relevant protocol specifications) to clarify that trustee public keys are expected to be broadly publicly known so that trustee signatures are publicly verifiable, and that trustee signatures for the election public key should be posted to the public bulletin board
+- renamed several Rust structures to increase understandability; this does not change any SDK functionality or protocol descriptions but does break the API, necessitating the 1.2 → 1.3 version bump
+- added `rustdoc` comments to public structures/functions in the `protocol` crate that did not previously have them, and updated many existing `protocol` crate documentation comments; aside from fixing some minor issues with existing comments, documentation comments were not updated in the `cryptography` crate as application developers typically do not program directly against it
+
+## [Version 1.2](https://github.com/FreeAndFair/VoteSecure/releases/tag/v1_2) - 5 May 2026
+
+- updated Rust `rand` package to 0.10.1 to address [RUSTSEC-2026-0097](https://rustsec.org/advisories/RUSTSEC-2026-0097)
+- updated ballot submission protocol documentation to match implementation details
+- fixed a formatting error in the CONOPS
+- fixed comment syntax issues in the Mermaid diagrams for the cryptographic protocols
+
 ## [Version 1.1.1](https://github.com/FreeAndFair/VoteSecure/releases/tag/v1_1_1) - 10 April 2026
 
 - updated threat model and procedures to address security advisories [GHSA-v43c-fm6q-w8f8](https://github.com/FreeAndFair/VoteSecure/security/advisories/GHSA-v43c-fm6q-w8f8) and [GHSA-w7jj-jfcc-gf89](https://github.com/FreeAndFair/VoteSecure/security/advisories/GHSA-w7jj-jfcc-gf89)

@@ -37,7 +37,7 @@ mod tests {
     use std::hash::{Hash, Hasher};
 
     // for generating random voter pseudonyms
-    use rand::distributions::{Alphanumeric, DistString};
+    use rand::distr::{Alphanumeric, SampleString};
 
     const MANIFEST: &str = "test_election_manifest";
 
@@ -78,8 +78,8 @@ mod tests {
         input: TrusteeInput,
         /// Whether this message was Byzantine-modified.
         /// We use this to:
-        /// 1. Prevent modifying the same message twice
-        /// 2. Record which phase was affected when the message is actually delivered
+        /// 1. Prevent modifying the same message twice;
+        /// 2. Record which phase was affected when the message is actually delivered.
         byzantine_modified: bool,
     }
 
@@ -519,7 +519,7 @@ mod tests {
             for (_ballot_style, ballots) in plaintext_ballots {
                 for ballot in ballots {
                     // Generate a pseudonym for the ballot.
-                    let voter_pseudonym = Alphanumeric.sample_string(&mut rand::thread_rng(), 16);
+                    let voter_pseudonym = Alphanumeric.sample_string(&mut rand::rng(), 16);
 
                     // Encrypt the ballot.
                     match encrypt_ballot(
