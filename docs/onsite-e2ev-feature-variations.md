@@ -32,10 +32,14 @@ The product line should be organized around an **invariant kernel** that is prov
 in every instance:
 
 - Naor-Yung (CCA2) ballot encryption under a threshold election key,
-- the verifiable DKG (Pedersen-style shares + check values),
+- the verifiable Joint-Feldman DKG (secret shares + public check values),
 - the hash-chained, signed bulletin board,
 - the Terelius-Wikström mix with proofs,
 - threshold decryption with Chaum-Pedersen (dlogeq) correctness proofs.
+
+(A component-by-component primer on this kernel — plain-English definitions, general
+applications, and proof-methodology guidance — is in
+[The Cryptographic Kernel, Explained](./onsite-e2ev-crypto-kernel.md).)
 
 VoteSecure's architecture already provides the three mechanisms that make variation safe:
 

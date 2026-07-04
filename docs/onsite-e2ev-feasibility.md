@@ -73,7 +73,7 @@ cited as "EVS Protocol N.M" throughout the rustdoc):
 | Component | Location | Role |
 |---|---|---|
 | ElGamal + Naor-Yung (CCA2) encryption | `cryptography/src/cryptosystem/` | Ballot encryption with proof of well-formedness |
-| Pedersen-style verifiable DKG + threshold decryption | `cryptography/src/dkgd/` | t-of-n election key; no single party can decrypt |
+| Joint-Feldman verifiable DKG + threshold decryption | `cryptography/src/dkgd/` | t-of-n election key; no single party can decrypt |
 | Chaum-Pedersen dlogeq proofs | `cryptography/src/zkp/dlogeq.rs` | Proves each partial decryption is correct |
 | Plaintext-equality proofs | `cryptography/src/zkp/pleq.rs` | Naor-Yung ciphertext validity |
 | Terelius-Wikström proof of shuffle | `cryptography/src/zkp/shuffle.rs` | Verifiable re-encryption mixnet |
