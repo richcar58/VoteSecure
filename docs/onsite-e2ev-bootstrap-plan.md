@@ -12,6 +12,8 @@
 **Review log:** Plan Review 1 (2026-07-09) — acronym changed from BMBS to BMVS ("Ballot Marking
 Voting System") across the document series; repository names fixed as `bmvs` and `bmvs-verifier`,
 to be created in `~/git` when this review completes; remote-repository governance ratified as D9.
+Plan Review 2 (2026-07-09) — added the [Local vs. GitHub appendix](#appendix-local-vs-github-responsibilities)
+clarifying where D6, D8, and the kernel work queue are implemented.
 
 This plan sequences the implementation of Option D from the
 [code-organization analysis](./onsite-e2ev-code-organization.md): three repositories — the
@@ -266,3 +268,109 @@ skeleton election natively; central services run from signed containers.
 6. Scaffold the `bmvs` workspace + CI; migrate the docs series (Rich pushes).
 7. Open the K1 (Fiat-Shamir) kernel issue with the four warning sites enumerated, and schedule
    its review.
+
+---
+
+## Appendix: Local vs. GitHub Responsibilities
+
+*Added in Plan Review 2, clarifying what Phase 0 items D6 and D8 and Phase 1's kernel work queue
+entail, and specifically which parts are implemented in the local development environment versus
+in GitHub.*
+
+Every mechanism in this plan lives in one of three places:
+
+- **(a) Files in the repository** — authored and tested locally, pushed by Rich (D9); they take
+  effect for every clone once landed. This is where most of the substance lives.
+- **(b) Per-machine setup** — one-time configuration in each developer's environment (hook
+  installation, signing keys, git config).
+- **(c) GitHub-side settings and infrastructure** — repository administration and job execution;
+  under D9 all of it is Rich's.
+
+The recurring principle: **local mechanisms are conveniences; GitHub mechanisms are the
+authoritative gates.** Local hooks can be bypassed (`git commit --no-verify`), so CI re-runs
+everything the hooks do (the fork already does this via `run-precommit-hooks.yml`), and branch
+protection is what makes those CI jobs binding.
+
+### D6 — Conventions carried over
+
+**Repo files (a).** The fork's `.pre-commit-config.yaml` defines the whole local enforcement
+stack: text hygiene (`end-of-file-fixer`, `trailing-whitespace`, `check-yaml`, shebang checks),
+`commitlint` with the conventional-commits config (plus the project's `wip`/`cosmetics` types),
+and Rust `fmt` / `cargo check` / `clippy -D warnings` against the workspace manifest. Implementing
+D6 means copying and adapting this file into `bmvs` and `bmvs-verifier` (new manifest paths,
+stable toolchain), plus a `CONTRIBUTING.md` documenting the rebase / fast-forward-only workflow.
+
+**Per-machine (b).** `pip install pre-commit && pre-commit install` once per clone — this writes
+the hooks into `.git/hooks`, after which they run at commit time on the developer's machine.
+Commit signing is also machine-local: the signing key lives in the developer's environment, and
+`git config commit.gpgsign true` + `user.signingkey` make signing happen at commit time; likewise
+`git config pull.rebase true`.
+
+**GitHub (c).** Three things: the signing **public** key uploaded to the GitHub account (what
+makes commits show "Verified"); branch-protection rules on `main`/release branches — *require
+linear history*, *require signed commits*, *require status checks to pass*; and the merge policy.
+Note that per the fork's convention the fast-forward merge itself is executed **locally**
+(`git merge --ff-only`, then push) because GitHub's UI cannot perform ff-only merges — GitHub's
+role is only to refuse non-linear pushes.
+
+### D8 — CI platform
+
+**Repo files (a).** All the substance of CI is version-controlled YAML in `.github/workflows/`.
+The fork's pattern (to be mirrored): per-artifact `test-validity-of-*` workflows triggered by
+`paths:` filters so unrelated changes don't run each other's jobs; heavier `verify-*`
+continuous-verification jobs; Docker-image workflows; `build-release.yml`; and
+`run-precommit-hooks.yml` re-running the local hook suite authoritatively. For `bmvs`:
+per-crate path-filtered jobs (fmt/clippy/deny/vet/nextest), the single-threaded model-checking
+suite, release builds of every binary, and service-image builds. Design rule adopted from the
+fork: workflows stay **thin wrappers around Makefile/cargo targets**, so everything CI does is
+reproducible in the local environment with the same command (`make ci` locally = the CI job on a
+clean machine).
+
+**Execution.** Once pushed, workflows run on GitHub-hosted runners — nothing executes in the
+local environment. Future exception: if heavy jobs (Tamarin proofs, long model-checking) outgrow
+hosted-runner limits, a *self-hosted runner* is a machine Rich administers that registers with
+GitHub — that piece would live in the local environment.
+
+**GitHub (c).** Enabling Actions on the new repos; the Actions permissions policy (restrict and
+SHA-pin third-party actions — supply-chain posture consistent with the project); designating
+specific jobs as **required status checks** in branch protection (what turns a workflow from
+informational into a gate); enabling the merge queue; and repository secrets — ideally none for
+building, with registry credentials only if/when CI is permitted to push container images rather
+than publication remaining manual under D9.
+
+### Phase 1 — Open the kernel work queue (K1–K3)
+
+This item creates tracked, scoped work items — it does not perform the work.
+
+**Tracking (GitHub, Rich).** The natural home is GitHub Issues on the fork, because the repo
+convention requires every PR to reference an issue (`Closes #N`). Creating issues is a remote
+modification, so per D9: issue text is drafted locally (scope, exact code sites, acceptance
+criteria, review requirements) and Rich posts it. An in-repo work-queue document is the
+alternative if keeping everything in-tree is preferred, at the cost of the PR-references-issue
+convention.
+
+**The work itself (local, when scheduled).** All three items are local engineering; GitHub's role
+is the issue, PR review, CI runs on push, and the eventual `kernel-v1.2-fork.2` tag (pushed by
+Rich):
+
+- **K1 — Fiat-Shamir completion:** code edits at the four
+  `#[crate::warning("Challenge inputs are incomplete.")]` sites in
+  `protocol/src/trustee_protocols/trustee_application/top_level_actor.rs`, plus resolving the
+  `"verify that this double hashing set up is ok"` note in `zkp/shuffle.rs` — binding the full
+  statement (election hash, public keys, ciphertext lists, round/slot context) into every
+  challenge derivation, with tests; independent review; then an upstream PR to FreeAndFair
+  (submission by Rich).
+- **K2 — stable enablement:** local changes to `macros/custom_warning_macro` (compile to no-ops
+  on stable behind a cfg), verified against a pinned stable toolchain locally; a small upstream
+  PR candidate.
+- **K3 — threshold matrix:** additional T-of-P test combinations in `cryptography/src/dkgd/`
+  (plausibly behind the existing `long_running_tests` feature), removing the module's warning
+  marker when satisfied.
+
+### Summary
+
+| Item | Local development environment | GitHub |
+|---|---|---|
+| D6 conventions | Author config files (`.pre-commit-config.yaml`, `CONTRIBUTING.md`); `pre-commit install` per clone; signing keys + git config; perform ff-only merges | Public key on account; branch protection (linear history, signed commits, required checks) |
+| D8 CI | Author workflow YAML; run the same make/cargo targets locally; (later) any self-hosted runner | Actions enablement + permissions policy; required-check designation; merge queue; secrets; job execution on hosted runners |
+| Kernel work queue | Draft issue text; all K1–K3 code, tests, and local verification | Issues (created by Rich); PR review + CI; upstream PRs and tags (pushed by Rich) |
