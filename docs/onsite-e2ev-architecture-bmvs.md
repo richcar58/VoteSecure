@@ -1,7 +1,7 @@
-# On-Site E2E-V Architecture, BMBS Variant: Ballot-Marking Devices with Polling-Place Tabulators
+# On-Site E2E-V Architecture, BMVS Variant: Ballot-Marking Devices with Polling-Place Tabulators
 
 **Date:** 2026-07-06
-**Status:** Investigation / architecture blueprint (BMBS variant)
+**Status:** Investigation / architecture blueprint (BMVS variant)
 **Series:** [Feasibility Assessment](./onsite-e2ev-feasibility.md) →
 [Feature Variation Points](./onsite-e2ev-feature-variations.md) →
 [Crypto Kernel Primer](./onsite-e2ev-crypto-kernel.md) →
@@ -9,7 +9,7 @@
 
 This document analyzes whether the on-site E2E-V architecture in
 [onsite-e2ev-architecture.md](./onsite-e2ev-architecture.md) can accommodate a **Ballot Marking
-Based System (BMBS)** — the workflow exemplified by
+Voting System (BMVS)** — the workflow exemplified by
 [ES&S ExpressVote](https://www.essvote.com/products/expressvote-3/) ballot-marking devices paired
 with a [DS300-class polling-place tabulator](https://www.essvote.com/products/ds300/) — while
 preserving *provable* cast-as-intended, recorded-as-cast, and counted-as-recorded guarantees.
@@ -22,20 +22,20 @@ becomes a **Ballot Marking Device** that prints on the voter's card), one compon
 physical path, and the tabulator's LAN link), one flow relocates (ballot cast moves from the
 voting machine to the tabulator), the separate VVPAT is absorbed into the ballot card, and one
 product-line constraint (X6, on paper↔cryptogram linkage) is deliberately amended — a privacy
-trade that BMBS makes inherently and that buys ballot-level auditability plus an automatic
+trade that BMVS makes inherently and that buys ballot-level auditability plus an automatic
 cross-check between the paper tally and the cryptographic tally. Every change, and every place a
 new protocol proof is required, is marked below.
 
 This is a **standalone, comprehensive** document: it reproduces all unchanged material from the
-baseline architecture and integrates the BMBS additions and changes in place. Flows are tagged
-**[unchanged]**, **[BMBS-changed]**, or **[BMBS-new]**; flow numbering is kept aligned with the
+baseline architecture and integrates the BMVS additions and changes in place. Flows are tagged
+**[unchanged]**, **[BMVS-changed]**, or **[BMVS-new]**; flow numbering is kept aligned with the
 baseline document so the two can be diffed side by side.
 
-## The BMBS Model and Its Mapping onto the Architecture
+## The BMVS Model and Its Mapping onto the Architecture
 
-The defining BMBS characteristics, and where each lands in this architecture:
+The defining BMVS characteristics, and where each lands in this architecture:
 
-| # | BMBS characteristic | Architectural realization |
+| # | BMVS characteristic | Architectural realization |
 |---|---|---|
 | 1 | At check-in, the voter receives a ballot card encoding their ballot style | The F2.1 authorization card and the ballot card **unify into one physical object**: the Voter Check-in Application prints the authorization zone (Z1) on blank ballot-card stock |
 | 2 | The voter inserts the card into any voting machine | F3.1 session activation, with the card physically ingested and held by the BMD for the session |
@@ -45,7 +45,7 @@ The defining BMBS characteristics, and where each lands in this architecture:
 | 6 | The machine returns the completed card to the voter | The card, now a marked ballot, travels with the voter (new interconnection I14) |
 | 7 | The vote is cast only when a Tabulator accepts the card | **Ballot cast relocates to the new Tabulator component (F15.1)**; the tabulator maintains running totals from the plaintext machine zone and stores cards for audit and recount |
 
-The pivotal design insight: BMBS's "commit, then carry the paper to the casting device" structure
+The pivotal design insight: BMVS's "commit, then carry the paper to the casting device" structure
 is *isomorphic* to the E2E-V "submit, then choose cast-or-check" structure. The commit step is the
 cryptographic submission; the walk from BMD to tabulator is the cast-or-check decision window; the
 tabulator is the caster; the check station is the challenge path. Nothing about the kernel needs
@@ -53,11 +53,11 @@ to move — only where casting is initiated, and what travels on paper.
 
 ### Three records, cross-checked
 
-A BMBS-E2E-V ballot exists in three synchronized forms, each checkable against the others:
+A BMVS-E2E-V ballot exists in three synchronized forms, each checkable against the others:
 
 | Record | Readable by | Checked against voter intent by |
 |---|---|---|
-| Human-readable text (card Z2) | The voter, directly | The voter reading the card (BMBS's native strength) |
+| Human-readable text (card Z2) | The voter, directly | The voter reading the card (BMVS's native strength) |
 | Machine-readable plaintext (card Z2) | Tabulator, check station | Check-station scan-and-display (F4.2); post-election paper recount |
 | Naor-Yung cryptogram (bulletin board) | Anyone (encrypted); trustees (jointly) | Benaloh challenge (F4.2); mix+decrypt transcript (F13.2) |
 
@@ -87,7 +87,7 @@ tally-reconciliation identity (§ Reconciliation).
 
 Identical to the baseline document — full **Baseline** feature set plus **provisional ballots**,
 **early voting**, and **free-text write-ins** — with one amendment: the signed election
-configuration's instance descriptor carries a **BMBS-mode flag**, so verifiers, auditors, and the
+configuration's instance descriptor carries a **BMVS-mode flag**, so verifiers, auditors, and the
 assurance case know which casting model, and which constraint set (X6′ rather than X6), governs
 this election. Parameters as before: `M` polling places, `K` BMDs per place, `N` trustees with
 threshold `T`, plus `J` tabulators per place (typically 1–2).
@@ -119,9 +119,9 @@ card accounting closes exactly at end of day.
 | Component | Trust zone | Role | Key material held |
 |---|---|---|---|
 | Voter Check-in Application (**VCA**) | Polling place, check-in zone | Verify voter identity/eligibility, assign ballot style, print card Z1, keep check-in journal | VCA Ed25519 signing key; `election_hash` |
-| Ballot Marking Device (**BMD**), ×K **[BMBS-changed]** | Polling place, ballot-path zone | Ingest card, present ballot, encode + encrypt selections, submit (commit), print Z2 + void nonce + return card, serve Benaloh challenges | Election public key; per-session ephemeral Ed25519 key pair; **BMD Ed25519 print-signing key**; per-ballot randomizers (held until cast/spoil/close) |
+| Ballot Marking Device (**BMD**), ×K **[BMVS-changed]** | Polling place, ballot-path zone | Ingest card, present ballot, encode + encrypt selections, submit (commit), print Z2 + void nonce + return card, serve Benaloh challenges | Election public key; per-session ephemeral Ed25519 key pair; **BMD Ed25519 print-signing key**; per-ballot randomizers (held until cast/spoil/close) |
 | Receipt printer (**PRN**) | Polling place, ballot-path zone (peripheral of each BMD) | Print take-home tracker receipts (VVPAT function absorbed by the card) | None |
-| **Tabulator (TAB), ×J [BMBS-new]** | Polling place, ballot-path zone | Scan committed cards, validate against board, initiate cast, maintain running totals from plaintext zone, store cards in sealed box, end-of-day signed reports | TAB Ed25519 signing key; BMD/VCA verifying keys |
+| **Tabulator (TAB), ×J [BMVS-new]** | Polling place, ballot-path zone | Scan committed cards, validate against board, initiate cast, maintain running totals from plaintext zone, store cards in sealed box, end-of-day signed reports | TAB Ed25519 signing key; BMD/VCA verifying keys |
 | Polling Place Controller (**PPC**) | Polling place, ballot-path zone | Digital Ballot Box + local bulletin board + session authorization; only ballot-path device with any external channel, and only after close | DBB Ed25519 signing key; session-authorization signing key; VCA/BMD/TAB verifying keys; consumed-nonce ledger |
 | Ballot Check Station (**BCS**) | Polling place, ballot-path zone | Ballot Check Application for Benaloh challenges: scans committed cards, brokers randomizer disclosure, three-way display (with audio readback) | Per-check ephemeral ElGamal + Ed25519 key pairs |
 | Voter Registration System (**VRS**) | Central authority network | Voter rolls, check-in status, participation records, provisional evidence | VRS signing key; roll data (never ballot data) |
@@ -207,20 +207,20 @@ removable media (`I10`).
 | ID | Endpoints | Channel | Active | Flows |
 |---|---|---|---|---|
 | I1 | VCA ↔ VRS | Secured network link (outside ballot path) | Pre-open, open, post-close | F1.1 provisioning, F1.2 check-in sync, F1.3 reconciliation — **[unchanged]** |
-| I2 | VCA → BMD | Ballot card (Z1), carried by voter | Polls open | F2.1 ballot-style authorization — **[BMBS-changed]** |
-| I3 | BMD ↔ PPC | Wired polling-place LAN | Polls open | F3.1 session activation **[BMBS-changed]**, F3.2 commit/submission **[BMBS-changed]**, F3.4 forwarded check request **[unchanged]**, F3.5 randomizer transmission **[unchanged]** — *F3.3 relocated to F15.1* |
-| I4 | BCS ↔ PPC | Wired polling-place LAN | Polls open | F4.1 check request **[BMBS-changed]**, F4.2 randomizer delivery + three-way display **[BMBS-changed]** |
+| I2 | VCA → BMD | Ballot card (Z1), carried by voter | Polls open | F2.1 ballot-style authorization — **[BMVS-changed]** |
+| I3 | BMD ↔ PPC | Wired polling-place LAN | Polls open | F3.1 session activation **[BMVS-changed]**, F3.2 commit/submission **[BMVS-changed]**, F3.4 forwarded check request **[unchanged]**, F3.5 randomizer transmission **[unchanged]** — *F3.3 relocated to F15.1* |
+| I4 | BCS ↔ PPC | Wired polling-place LAN | Polls open | F4.1 check request **[BMVS-changed]**, F4.2 randomizer delivery + three-way display **[BMVS-changed]** |
 | I5 | BMD → PRN | Local printer cable | Polls open | F5.2 tracker receipt **[unchanged]** — *F5.1 (VVPAT) removed: the card is the paper record* |
-| I6 | EAS-C → PPC/BMD/BCS/TAB | Signed removable media (or supervised one-time wired) | Pre-open only | F6.1 configuration provisioning **[BMBS-changed]**, F6.2 L&A test session **[BMBS-changed]** |
-| I7 | PPC → PBB-C | Secure network or physical media | After each daily close; final close | F7.1 board segment + tabulator report upload **[BMBS-changed]** |
+| I6 | EAS-C → PPC/BMD/BCS/TAB | Signed removable media (or supervised one-time wired) | Pre-open only | F6.1 configuration provisioning **[BMVS-changed]**, F6.2 L&A test session **[BMVS-changed]** |
+| I7 | PPC → PBB-C | Secure network or physical media | After each daily close; final close | F7.1 board segment + tabulator report upload **[BMVS-changed]** |
 | I8 | EAS-C ↔ VRS | Central secured network | Setup; post-close | F8.1 eligibility snapshot, F8.2 provisional adjudication — **[unchanged]** |
-| I9 | PPC → precinct posting | Printed paper, publicly posted | Each daily close; final close | F9.1 chain-head attestation **[BMBS-changed]** |
-| I10 | PBB-C ↔ TAS | Removable media across the air gap | Post final close | F10.1 tally input import **[BMBS-changed]**, F10.2 tally transcript export **[BMBS-changed]** |
+| I9 | PPC → precinct posting | Printed paper, publicly posted | Each daily close; final close | F9.1 chain-head attestation **[BMVS-changed]** |
+| I10 | PBB-C ↔ TAS | Removable media across the air gap | Post final close | F10.1 tally input import **[BMVS-changed]**, F10.2 tally transcript export **[BMVS-changed]** |
 | I11 | TAS ↔ TA | Air-gapped wired LAN | Pre-open (setup, DKG); post-close (mix, decrypt) | F11.1–F11.4 — **[unchanged]** |
 | I12 | EAS-C → PBB-C | Central secured network | Pre-open; post-close | F12.1 config publication **[unchanged]**, F12.2 disposition publication **[unchanged]** |
-| I13 | PBB-C → public | Public read access | Post final close (config from pre-open) | F13.1 tracker lookup **[unchanged]**, F13.2 full verification **[BMBS-changed]**, F13.3 mirroring **[unchanged]** |
-| **I14** | BMD → voter → TAB *or* BCS | **Committed ballot card (physical)** | Polls open | F14.1 marked-card conveyance — **[BMBS-new]** |
-| **I15** | TAB ↔ PPC | **Wired polling-place LAN** | Polls open; close-out | F15.1 card cast, F15.2 end-of-day totals & card report — **[BMBS-new]** |
+| I13 | PBB-C → public | Public read access | Post final close (config from pre-open) | F13.1 tracker lookup **[unchanged]**, F13.2 full verification **[BMVS-changed]**, F13.3 mirroring **[unchanged]** |
+| **I14** | BMD → voter → TAB *or* BCS | **Committed ballot card (physical)** | Polls open | F14.1 marked-card conveyance — **[BMVS-new]** |
+| **I15** | TAB ↔ PPC | **Wired polling-place LAN** | Polls open; close-out | F15.1 card cast, F15.2 end-of-day totals & card report — **[BMVS-new]** |
 
 Cryptographic algorithm names as in the baseline document (Ristretto255 context; Ed25519; ElGamal
 `EVS` 11.15; Naor-Yung `EVS` 11.31 with plaintext-equality proof `EVS` 10.8; Joint-Feldman DKG
@@ -281,13 +281,13 @@ reuse the existing VoteSecure [protocol specs](./protocol/specs/).
 6. **Post-conditions:** *reconciled* — turnout/participation reporting available; *discrepancy* —
    incident procedure; provisional records staged for adjudication (F8.2).
 
-## I2: Voter Check-in Application → Ballot Marking Device (ballot card Z1) — [BMBS-changed]
+## I2: Voter Check-in Application → Ballot Marking Device (ballot card Z1) — [BMVS-changed]
 
 ### F2.1 — Ballot-style authorization on the ballot card
 
 1. **What it does:** conveys a single-use, ballot-style-scoped voting authorization across the
    mandated isolation gap between check-in and the ballot path — printed as **zone Z1 of the
-   ballot card itself**, the same physical card the BMD will later mark (BMBS characteristic 1).
+   ballot card itself**, the same physical card the BMD will later mark (BMVS characteristic 1).
    The voter is the transport, and may use **any** BMD at the site.
 2. **Initiator:** VCA, printing automatically on successful check-in.
 3. **Pre-conditions:** voter checked in (F1.2, or queued offline); ballot style determined; PPC
@@ -308,11 +308,11 @@ reuse the existing VoteSecure [protocol specs](./protocol/specs/).
 
 ## I3: Ballot Marking Device ↔ Polling Place Controller (wired LAN)
 
-### F3.1 — Session activation† — [BMBS-changed]
+### F3.1 — Session activation† — [BMVS-changed]
 
 1. **What it does:** converts a valid card into an authorized voting session bound to a fresh
    session key pair and a pseudonym, unlocking the correct ballot style on this BMD. The BMD
-   **physically ingests and holds the card** for the session (BMBS characteristic 2), preventing
+   **physically ingests and holds the card** for the session (BMVS characteristic 2), preventing
    mid-session card walk-off and guaranteeing Z2 is printed on the same card that authorized the
    session.
 2. **Initiator:** BMD, when the voter inserts their card.
@@ -336,11 +336,11 @@ reuse the existing VoteSecure [protocol specs](./protocol/specs/).
    state consumed except an audit log entry; *machine failure mid-session before commit* —
    poll-worker-authorized void-and-reissue, logged and reconciled.
 
-### F3.2 — Commit: ballot submission + card marking — [BMBS-changed]
+### F3.2 — Commit: ballot submission + card marking — [BMVS-changed]
 
 *Cryptographic core unchanged from the
 [ballot submission spec](./protocol/specs/ballot-submission-spec.md); printing and card handling
-added. This flow realizes BMBS characteristics 4, 5, and 6 in one atomic sequence.*
+added. This flow realizes BMVS characteristics 4, 5, and 6 in one atomic sequence.*
 
 1. **What it does:** irrevocably commits the ballot: posts the encrypted ballot to the local board
    (the Benaloh commit — the BMD cannot later change anything, because the cryptogram is on the
@@ -367,7 +367,7 @@ added. This flow realizes BMBS characteristics 4, 5, and 6 in one atomic sequenc
    that were encrypted** (making barcode↔cryptogram consistency a byte-equality check), and is
    Ed25519-signed by the BMD's print-signing key — the tabulator's basis for rejecting forged or
    hand-crafted cards.
-6. **Post-conditions:** *success* — commit is irrevocable (BMBS characteristic 4) with three
+6. **Post-conditions:** *success* — commit is irrevocable (BMVS characteristic 4) with three
    synchronized records (text, machine block, board cryptogram); the voter holds the marked card
    (characteristic 6) and the tracker receipt, and now chooses: cast at a tabulator (F15.1) or
    challenge at the check station (F4.1); *submission rejected* (invalid proof/signature,
@@ -378,8 +378,8 @@ added. This flow realizes BMBS characteristics 4, 5, and 6 in one atomic sequenc
 
 ### F3.3 — *Relocated.* Ballot cast is no longer initiated by the voting machine
 
-In the BMBS variant, no cast request ever originates from the BMD. Casting is initiated by the
-Tabulator when it accepts the physical card — see **F15.1**. (BMBS characteristic 7: "votes are
+In the BMVS variant, no cast request ever originates from the BMD. Casting is initiated by the
+Tabulator when it accepts the physical card — see **F15.1**. (BMVS characteristic 7: "votes are
 only cast when a tabulator accepts a ballot card.") The
 [ballot cast spec](./protocol/specs/ballot-cast-spec.md)'s board rules — most-recent submission,
 exactly one cast per pseudonym, matching keys — are enforced unchanged by the PPC; only the
@@ -419,7 +419,7 @@ initiating actor and its authentication change. **New proof required** (see § P
 
 ## I4: Ballot Check Station ↔ Polling Place Controller (wired LAN)
 
-### F4.1 — Check request from a committed card — [BMBS-changed]
+### F4.1 — Check request from a committed card — [BMVS-changed]
 
 1. **What it does:** starts a Benaloh challenge: instead of feeding the tabulator, the voter
    presents their **committed card** at the check station, which scans Z2, fetches the board
@@ -440,7 +440,7 @@ initiating actor and its authentication change. **New proof required** (see § P
 6. **Post-conditions:** *valid* — request pending at the originating BMD; *invalid* (forged Z2,
    already cast, already spoiled, malformed) — refusal with reason, nothing disclosed.
 
-### F4.2 — Randomizer delivery, three-way verification, and spoil — [BMBS-changed]
+### F4.2 — Randomizer delivery, three-way verification, and spoil — [BMVS-changed]
 
 1. **What it does:** completes cast-as-intended verification across **all three records at
    once**: the check station opens the board cryptogram with the disclosed randomizers, decodes
@@ -468,7 +468,7 @@ initiating actor and its authentication change. **New proof required** (see § P
 
 ### F5.1 — *Removed.* The marked card is the voter-verifiable paper record
 
-The baseline's separate VVPAT print is absorbed by the card's Z2 human-readable text (BMBS
+The baseline's separate VVPAT print is absorbed by the card's Z2 human-readable text (BMVS
 characteristic 5). The paper record now travels through the voter's hands to the tabulator's
 sealed storage rather than a behind-glass printer — and, unlike the baseline VVPAT, it carries the
 tracker. That linkage is the deliberate X6 → X6′ amendment analyzed in § Privacy.
@@ -476,7 +476,7 @@ tracker. That linkage is the deliberate X6 → X6′ amendment analyzed in § Pr
 ### F5.2 — Tracker receipt print — [unchanged]
 
 1. **What it does:** gives the voter their take-home tracker for the recorded-as-cast check —
-   necessary in BMBS because the card itself (which also bears the tracker) is surrendered at
+   necessary in BMVS because the card itself (which also bears the tracker) is surrendered at
    cast.
 2. **Initiator:** BMD, at F3.2 success.
 3. **Pre-conditions:** submission accepted and card printed.
@@ -490,11 +490,11 @@ tracker. That linkage is the deliberate X6 → X6′ amendment analyzed in § Pr
 
 ## I6: Election Administration System → Polling-Place Devices (signed media, pre-open)
 
-### F6.1 — Configuration and key provisioning — [BMBS-changed]
+### F6.1 — Configuration and key provisioning — [BMVS-changed]
 
 1. **What it does:** installs the trustee-endorsed election configuration and all public key
    material on every polling-place device before opening; the configuration embeds the
-   product-line instance descriptor **including the BMBS-mode flag**, so the deployed casting
+   product-line instance descriptor **including the BMVS-mode flag**, so the deployed casting
    model is itself cryptographically committed.
 2. **Initiator:** EA officials (supervised provisioning ceremony).
 3. **Pre-conditions:** setup and DKG complete (F11.1, F11.2); configuration published (F12.1);
@@ -502,7 +502,7 @@ tracker. That linkage is the deliberate X6 → X6′ amendment analyzed in § Pr
 4. **Inputs → outputs:** signed configuration {manifest; contest/style definitions including
    write-in field lengths; election public key; trustee roster + verifying keys; VCA verifying
    keys; **BMD print-signing verifying keys; TAB verifying keys**; early-voting calendar; instance
-   descriptor with BMBS flag} → configured PPC/BMD/BCS/**TAB**; provisioning receipts
+   descriptor with BMVS flag} → configured PPC/BMD/BCS/**TAB**; provisioning receipts
    (installed-bundle hashes) logged centrally; PPC generates its DBB and session-authorization
    signing keys; **each BMD generates its print-signing key; each TAB its report-signing key** —
    verifying halves escrowed to the EAS-C for publication.
@@ -513,9 +513,9 @@ tracker. That linkage is the deliberate X6 → X6′ amendment analyzed in § Pr
    can verify every BMD's Z2 signatures offline; *any verification failure* — device not placed
    in service.
 
-### F6.2 — Logic-and-accuracy (L&A) test session — [BMBS-changed]
+### F6.2 — Logic-and-accuracy (L&A) test session — [BMVS-changed]
 
-1. **What it does:** public pre-election test now covering the full BMBS loop: flagged test cards
+1. **What it does:** public pre-election test now covering the full BMVS loop: flagged test cards
    are checked in, marked at BMDs, challenged at the check station, and **fed through the
    tabulators** (test totals verified against the scripted selections); every test cryptogram is
    then provably excluded, and test cards are removed and reconciled.
@@ -534,7 +534,7 @@ tracker. That linkage is the deliberate X6 → X6′ amendment analyzed in § Pr
 
 ## I7: Polling Place Controller → Central Bulletin Board (after close)
 
-### F7.1 — Board segment and tabulator report upload — [BMBS-changed]
+### F7.1 — Board segment and tabulator report upload — [BMVS-changed]
 
 1. **What it does:** transfers the site's chained board — nightly segments during early voting,
    final segment at close — **plus each tabulator's signed end-of-day report (F15.2)** for central
@@ -589,7 +589,7 @@ tracker. That linkage is the deliberate X6 → X6′ amendment analyzed in § Pr
 
 ## I9: Polling Place Controller → Precinct Public Posting (paper)
 
-### F9.1 — Chain-head attestation — [BMBS-changed]
+### F9.1 — Chain-head attestation — [BMVS-changed]
 
 1. **What it does:** at every daily close and at final close, prints and publicly posts the board
    head hash, entry counts, **each tabulator's totals-report hash, and the card accounting line**
@@ -611,10 +611,10 @@ tracker. That linkage is the deliberate X6 → X6′ amendment analyzed in § Pr
 
 ## I10: Central Bulletin Board ↔ Trustee Administration Server (removable media)
 
-### F10.1 — Tally input import (into the air gap) — [BMBS-changed]
+### F10.1 — Tally input import (into the air gap) — [BMVS-changed]
 
 1. **What it does:** brings the complete published election record into the air gap and fixes,
-   verifiably, the exact set of cryptograms to be mixed. **BMBS addition:** the signed tabulator
+   verifiably, the exact set of cryptograms to be mixed. **BMVS addition:** the signed tabulator
    reports ride along — not as mix input, but so the ceremony's output can be reconciled against
    them before publication.
 2. **Initiator:** EA officials, with the trustees convened and witnessing.
@@ -635,7 +635,7 @@ tracker. That linkage is the deliberate X6 → X6′ amendment analyzed in § Pr
    missing or extra cast cryptogram, or any count mismatch against the tabulator reports* —
    ceremony halts publicly before any mixing occurs.
 
-### F10.2 — Tally transcript export (out of the air gap) — [BMBS-changed]
+### F10.2 — Tally transcript export (out of the air gap) — [BMVS-changed]
 
 1. **What it does:** carries the complete verifiable tally out of the air gap for publication,
    now including the **reconciliation statement** against the tabulators' paper-derived totals.
@@ -667,7 +667,7 @@ These four flows are the existing VoteSecure trustee subprotocols, unchanged; se
 
 1. **What it does:** all trustees review and sign the election configuration — including the
    trustee roster/keys (establishing trustee PKI) and the instance descriptor (which, in this
-   variant, declares BMBS mode).
+   variant, declares BMVS mode).
 2. **Initiator:** TAS (distributes `SetupMsg`).
 3. **Pre-conditions:** trustee identities and verifying keys confirmed out of band.
 4. **Inputs → outputs:** `SetupMsg` {originator, signer, manifest, threshold T, trustee list} →
@@ -729,7 +729,7 @@ These four flows are the existing VoteSecure trustee subprotocols, unchanged; se
 ### F12.1 — Configuration publication (pre-open)
 
 1. **What it does:** publishes the trustee-endorsed configuration as the root entry of the public
-   election record — including the BMBS-mode instance descriptor.
+   election record — including the BMVS-mode instance descriptor.
 2. **Initiator:** EA, after F11.1/F11.2.
 3. **Pre-conditions:** N trustee endorsements and N identical election-public-key signatures.
 4. **Inputs → outputs:** signed configuration + election public key → root of the published
@@ -769,7 +769,7 @@ These four flows are the existing VoteSecure trustee subprotocols, unchanged; se
    cast* — the receipt (with a photographed precinct attestation, F9.1) is publicly verifiable
    evidence backing a formal challenge.
 
-### F13.2 — Full independent verification — [BMBS-changed]
+### F13.2 — Full independent verification — [BMVS-changed]
 
 1. **What it does:** the counted-as-recorded check, executable by anyone: recompute the entire
    election from published data — now including the paper-vs-crypto reconciliation.
@@ -803,19 +803,19 @@ These four flows are the existing VoteSecure trustee subprotocols, unchanged; se
 5. **Cryptography:** SHA-3 record heads; mirror Ed25519 signatures over observed heads.
 6. **Post-conditions:** divergent heads anywhere → public, timestamped proof of equivocation.
 
-## I14: Ballot Marking Device → Voter → Tabulator or Check Station (committed card) — [BMBS-new]
+## I14: Ballot Marking Device → Voter → Tabulator or Check Station (committed card) — [BMVS-new]
 
 ### F14.1 — Marked-card conveyance
 
 1. **What it does:** carries the committed ballot — as a signed physical message — from the BMD
    to exactly one of: a tabulator (cast, F15.1) or the check station (challenge, F4.1). The walk
    itself is the Benaloh cast-or-check decision window, embodied in paper.
-2. **Initiator:** the voter (BMBS characteristics 6–7).
+2. **Initiator:** the voter (BMVS characteristics 6–7).
 3. **Pre-conditions:** F3.2 complete: Z2 printed and BMD-signed, Z1 nonce voided, board submission
    exists.
 4. **Inputs → outputs:** the card {voided Z1; Z2: human text + machine block + BMD signature} →
    presented to a TAB or the BCS. A privacy sleeve covers the human-readable text in transit
-   (standard BMBS practice; the feature model's supervised receipt-freedom requirement applies —
+   (standard BMVS practice; the feature model's supervised receipt-freedom requirement applies —
    the card never leaves the polling place).
 5. **Cryptography:** none performed in transit; the card's integrity rests on the Z2 Ed25519
    signature (unforgeable without a BMD print-signing key) and its binding to the board entry via
@@ -828,17 +828,17 @@ These four flows are the existing VoteSecure trustee subprotocols, unchanged; se
    voter's tracker receipt still verifies; contested cases resolve through the accounting records
    and, if needed, spoil-by-disposition before close.
 
-## I15: Tabulator ↔ Polling Place Controller (wired LAN) — [BMBS-new]
+## I15: Tabulator ↔ Polling Place Controller (wired LAN) — [BMVS-new]
 
 ### F15.1 — Card cast
 
-1. **What it does:** the casting act (BMBS characteristic 7): the tabulator accepts a committed
+1. **What it does:** the casting act (BMVS characteristic 7): the tabulator accepts a committed
    card, validates it against the board, initiates the cast bulletins, adds the card's plaintext
    to its running totals, and retains the card in its sealed storage.
 2. **Initiator:** TAB, when a voter feeds their card.
 3. **Pre-conditions:** F3.2/F14.1: card bears a valid, BMD-signed Z2; the tracker's submission is
    on the board, uncast, unspoiled, and the most recent for its pseudonym; polls open.
-4. **Inputs → outputs:** scanned Z2 → `CastReqMsg` **[BMBS-changed origin]** {`election_hash`,
+4. **Inputs → outputs:** scanned Z2 → `CastReqMsg` **[BMVS-changed origin]** {`election_hash`,
    pseudonym, tracker, TAB ID}, signed by the **TAB** key → PPC enforces the unchanged
    [ballot-cast spec](./protocol/specs/ballot-cast-spec.md) board rules and appends the
    `VoterAuthBulletin` + `BallotCastBulletin` (recording TAB as the casting agent); TAB adds the
@@ -879,10 +879,10 @@ These four flows are the existing VoteSecure trustee subprotocols, unchanged; se
 
 ---
 
-## How the Three E2E-V Properties Survive the BMBS Transformation
+## How the Three E2E-V Properties Survive the BMVS Transformation
 
 **Cast as intended.** Three mutually reinforcing mechanisms: (1) the voter *reads the card* —
-direct, software-independent verification of the human-readable record (BMBS's native strength,
+direct, software-independent verification of the human-readable record (BMVS's native strength,
 absent from the baseline's behind-glass VVPAT); (2) the *Benaloh challenge* (F4.1/F4.2) — commit
 happens before the BMD can know whether the card will be cast or checked, so a cheating BMD is
 caught with probability growing in the audit rate; (3) the *three-way byte-equality check* at the
@@ -902,7 +902,7 @@ report hashes and card counts — binds what the site saw to what got published.
 
 **Counted as recorded.** The kernel path is untouched: board snapshot → verified mix-input
 arithmetic (F10.1) → Terelius-Wikström mixing (F11.3) → threshold decryption with Chaum-Pedersen
-proofs (F11.4) → public transcript (F10.2) → anyone re-verifies (F13.2). BMBS adds a second,
+proofs (F11.4) → public transcript (F10.2) → anyone re-verifies (F13.2). BMVS adds a second,
 independent path to the same answer: the paper cards, counted at cast time by the tabulators and
 recountable forever from sealed storage. The published **reconciliation identity** — per reporting
 group, cryptographic tally = Σ tabulator totals — must hold, and anyone can check it. Integrity
@@ -940,7 +940,7 @@ preserves vote secrecy while keeping both channels fully auditable.
 
 ## Privacy Analysis and Constraint Amendments
 
-**X6 → X6′ (amended).** The baseline forbade any ballot-level paper↔cryptogram linkage; BMBS
+**X6 → X6′ (amended).** The baseline forbade any ballot-level paper↔cryptogram linkage; BMVS
 *requires* it — the tabulator can only cast the right board entry because the tracker is printed
 on the card. The stored card therefore links {plaintext vote ↔ tracker ↔ board pseudonym} at
 ballot level. What this does and does not expose:
@@ -1007,14 +1007,14 @@ a new† obligation from the baseline architecture). Everything else in the
 | F15.1 board rules | **Reused** (initiator changed: TAB, not the voting device) | [ballot-cast](./protocol/specs/ballot-cast-spec.md) spec — new proof P2 |
 | F11.1–F11.4, F10.1 message set | **Reused** unchanged | [setup](./protocol/specs/setup-spec.md), [election-key-gen](./protocol/specs/election-key-gen-spec.md), [trustee-mixing](./protocol/specs/trustee-mixing-spec.md), [trustee-decryption](./protocol/specs/trustee-decryption-spec.md) specs |
 | F2.1 `CardAuthorization`, F3.1 session activation | **New†** (from baseline architecture; now on unified card stock) | Replaces [voter-authentication](./protocol/specs/voter-authentication-spec.md) — proof P1 |
-| Z2 print + card lifecycle (F3.2 additions, F14.1) | **New† (BMBS)** | Proofs P1, P4, P6, P8 |
-| Tabulator flows (F15.1, F15.2) + `TabulatorReportMsg`† | **New† (BMBS)** | Proofs P2, P5 |
-| `DispositionRecord` machinery (F6.2, F8.2, F12.2, misprint/spoil voids) | **New†** (from baseline; BMBS adds card-void categories) | Proof P5 |
-| `BoardSegmentMsg`, attestation (F7.1, F9.1 + TAB reports) | **New†** (from baseline; BMBS extends content) | Proof P5 |
+| Z2 print + card lifecycle (F3.2 additions, F14.1) | **New† (BMVS)** | Proofs P1, P4, P6, P8 |
+| Tabulator flows (F15.1, F15.2) + `TabulatorReportMsg`† | **New† (BMVS)** | Proofs P2, P5 |
+| `DispositionRecord` machinery (F6.2, F8.2, F12.2, misprint/spoil voids) | **New†** (from baseline; BMVS adds card-void categories) | Proof P5 |
+| `BoardSegmentMsg`, attestation (F7.1, F9.1 + TAB reports) | **New†** (from baseline; BMVS extends content) | Proof P5 |
 | F10.2 `TallyTranscript` + reconciliation statement | **New†** as artifact schema; contents are existing proof outputs + published arithmetic | Proof P5 |
 | Registration-side flows (F1.x, F8.1) | **New†** (from baseline), unchanged here | Procedural + signed-journal evidence |
 
-Consistent with the whole series: the kernel is proven once and untouched; every BMBS addition is
+Consistent with the whole series: the kernel is proven once and untouched; every BMVS addition is
 a compositional subprotocol with a named proof obligation; and the completion of the kernel's
 Fiat-Shamir challenge binding remains the prerequisite on which all of the transported proofs
 stand.
