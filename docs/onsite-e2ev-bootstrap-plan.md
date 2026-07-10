@@ -47,6 +47,44 @@ means accepting or amending these:
 | D8 | CI platform | GitHub Actions, mirroring the fork's per-artifact path-filter pattern |
 | D9 | Remote governance | **Ratified 2026-07-09:** only Rich pushes to or otherwise modifies remote repositories (including remote creation, tags, and branch operations); all other work is local — edits, and local commits only when requested |
 
+### Phase 0 execution status (2026-07-09)
+
+**Implemented locally** (all content staged, deliberately uncommitted — Rich makes the initial
+commits per D9):
+
+- `~/git/bmvs` and `~/git/bmvs-verifier` created (`git init -b main`) — the local half of D1,
+  under Rich's explicit authorization.
+- In both repositories, the ratifiable defaults are materialized as reviewable files:
+  - **D2** — `LICENSE.md`: the upstream dual scheme (Apache-2.0 for code, CC BY-SA 4.0 for
+    standalone documentation), copyright line set to "Richard Cardone" *pending confirmation*;
+  - **D4** — `rust-toolchain.toml` pinned to **stable 1.97.0** (the stable installed and active
+    in the development environment);
+  - **D6** — `.pre-commit-config.yaml` (text hygiene + commitlint; the kernel's Rust hooks are
+    deliberately deferred until a cargo workspace exists), `.commitlintrc.js` (copied verbatim
+    from the fork, including `wip`/`cosmetics`), `.gitattributes` (LF normalization),
+    `CONTRIBUTING.md` (full D6 workflow + D9 governance);
+  - **D8** — `.github/workflows/run-precommit-hooks.yml`, the first CI workflow, adapted from the
+    fork's (Rust setup step returns with the workspace scaffold);
+  - **D3 / D5 / D7** — documented as governing-decision tables in each `README.md` (these three
+    have no implementable artifact until Phases 2–3).
+
+**Remaining to complete Phase 0 (Rich):**
+
+- [ ] Ratify D2–D8 by reviewing the materialized files above (amendments welcome — each decision
+      is now a concrete file diff rather than an abstraction).
+- [ ] Confirm or amend the copyright holder line in both `LICENSE.md` files.
+- [ ] Review the staged content and make the initial signed commits in both repositories
+      (suggested: `chore: bootstrap repository per BMVS plan Phase 0`).
+- [ ] Run `pre-commit install && pre-commit install --hook-type commit-msg` in both clones.
+- [ ] Create the two private GitHub remotes; add as `origin`; push `main` (D1 remote half, D9).
+- [ ] GitHub settings on both repos: branch protection on `main` (require linear history, signed
+      commits; add the pre-commit workflow as a required status check after its first run);
+      enable Actions with a restricted/pinned actions policy.
+- [ ] Confirm the commit-signing public key is present on the GitHub account.
+
+Note: the M0 gate also requires the Phase 1 items (kernel toolchain date pin, kernel tag,
+upstream remote + cadence, kernel work queue), which are tracked separately below.
+
 ## Phase 1 — Kernel Repo Hygiene (this fork) — gate M0
 
 Goal: this fork becomes exactly what Option D needs it to be — a pristine, upstream-mergeable
