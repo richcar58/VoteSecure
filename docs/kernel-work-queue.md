@@ -130,6 +130,117 @@ Mirror the macro's own pattern in its consumers:
 - [ ] Included in tag `kernel-v1.3-fork.2` (the Phase 2 consumption point; `fork.1` was
       published at the pre-K2 docs commit and, per the fork policy, published tags are never
       moved).
+
+### K2 upstream submission kit
+
+Commit `3a100d2` includes `docs/kernel-work-queue.md` (BMVS-specific), and its tree carries the
+fork's pinned `rust-toolchain.toml` — neither belongs in the upstream PR, and the toolchain pin
+is a separate upstream offer. Branch preparation that extracts exactly the crate changes:
+
+```bash
+cd ~/git/VoteSecure
+git fetch upstream
+git checkout -b compile-on-stable upstream/main
+git checkout 3a100d2 -- implementations/rust/workspace/cryptography \
+                        implementations/rust/workspace/protocol
+cargo +stable check --workspace \
+  --manifest-path implementations/rust/workspace/Cargo.toml   # sanity re-check on the branch
+git commit -m "fix: compile on stable Rust by default by gating custom warnings"
+git push origin compile-on-stable   # then open the PR against FreeAndFair/VoteSecure main
+```
+
+**Upstream issue stub** (their convention: every PR references an issue — post this first, then
+`Closes #<n>` in the PR):
+
+> **Title:** Kernel crates require nightly even with `custom-warnings` disabled
+>
+> `cryptography` and `protocol` declare `#![feature(stmt_expr_attributes)]` and
+> `#![feature(proc_macro_hygiene)]` unconditionally, so every consumer must build on nightly —
+> even though the only user of those gates, `custom_warning_macro`, is behind the off-by-default
+> `custom-warnings` feature and already no-ops on stable. Downstream projects with pinned-stable
+> toolchain policies (common in certified/regulated deployments — the library's target market)
+> cannot depend on the crates at all. Proposal: apply the macro's own internal pattern
+> (`cfg_attr` on the feature) to its consumers, making default builds stable-compatible with
+> zero change to nightly + `custom-warnings` behavior.
+
+**PR description** (paste as the PR body; replace `#<n>`):
+
+---
+
+**Title:** `fix: compile on stable Rust by default by gating custom warnings behind the custom-warnings feature`
+
+Closes #<n>.
+
+#### Summary
+
+Default builds of `cryptography` and `votesecure-protocol-library` currently require a nightly
+toolchain solely because the crate roots declare
+`#![feature(stmt_expr_attributes, proc_macro_hygiene)]` for `custom_warning_macro` — even when
+the off-by-default `custom-warnings` feature is disabled and the macro no-ops. This PR gates
+those declarations, and every warning-attribute use that sits in an unstable position, behind
+the existing `custom-warnings` feature via the built-in (stable) `cfg_attr` mechanism — the same
+pattern `custom_warning_macro` already uses internally
+(`#![cfg_attr(feature = "on", feature(proc_macro_diagnostic, proc_macro_span))]`).
+
+Result: **default builds compile on stable Rust; nightly + `--features custom-warnings` is
+byte-for-byte the current behavior.** Nothing is removed and no workflow changes — the
+repository's `rust-toolchain.toml` still governs development, and the diagnostics remain fully
+available where they are used today.
+
+#### Why
+
+- Cargo builds dependencies from source with the consumer's toolchain, so the crate-root
+  `#![feature]` declarations transitively impose nightly on every downstream project. Consumers
+  with pinned-stable toolchain policies — the norm in certified election-technology settings the
+  library targets — currently cannot depend on these crates at all. (We consume them downstream
+  on pinned stable and carry this change in production use.)
+- `stmt_expr_attributes` has been unstable for roughly a decade with no stabilization path;
+  keeping it off the default build path removes nightly-breakage risk from a high-assurance
+  library's default configuration.
+- Enables a stable CI lane to guard the property (happy to contribute the workflow as a
+  follow-up).
+
+#### What changed
+
+- Both crate roots: `#![feature(…)]` →
+  `#![cfg_attr(feature = "custom-warnings", feature(stmt_expr_attributes, proc_macro_hygiene))]`.
+- All warning attributes converted to
+  `#[cfg_attr(feature = "custom-warnings", crate::warning("…"))]` (uniformly for single-line
+  sites; hand-converted where multi-line and required).
+- One conditionally-unused alias import (`use custom_warning_macro as custom_warning;`) is now
+  `#[cfg(feature = "custom-warnings")]`-gated so `-D warnings` stays clean in default builds.
+- `cargo fmt` applied; ~22 files, mechanical.
+
+One finding worth noting for the macro's documentation: besides statement/expression positions,
+proc-macro attributes on **file modules** (`pub mod fixed;`) are also unstable
+(`E0658: file modules in proc macro input are unstable`); two such sites in
+`utils/serialization/mod.rs` are covered by the same `cfg_attr` treatment.
+
+#### What did not change
+
+Behavior on nightly with `custom-warnings` enabled (all diagnostics emitted as before); the
+repository toolchain file; the benches (`#![feature(test)]` — bench targets are never compiled
+by dependents, so they remain nightly-only dev tools).
+
+#### Verification
+
+| Check | Configuration | Result |
+|---|---|---|
+| `cargo check --workspace` | stable 1.97.0, default features | pass |
+| `cargo test --release --workspace -- --test-threads=1` | stable 1.97.0, default features | pass (exit 0) |
+| `cargo fmt --check --all` | pinned nightly | pass |
+| `cargo clippy --workspace -- -D warnings` | pinned nightly, default features | pass |
+| `cargo check -p <each crate> --features custom-warnings` | nightly | pass, warnings emitted |
+
+Verified MSRV floor not established below 1.97.0 (edition 2024 implies ≥ 1.85); happy to
+determine and document an exact MSRV if desired.
+
+🤖 Generated with [Claude Code](https://claude.com/claude-code)
+
+---
+
+*(The attribution line is accurate — this description was drafted with Claude Code — and is
+recommended kept for transparency, but it is Rich's to remove.)*
 - [ ] Offered upstream to FreeAndFair/VoteSecure.
 
 ---
