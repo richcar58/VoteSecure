@@ -11,10 +11,15 @@
 //! The primary entry point for each participant is a top-level actor, which
 //! manages the state for all that participant's subprotocols.
 
-// Only necessary for custom_warning_macro
-#![feature(stmt_expr_attributes)]
-// Only necessary for custom_warning_macro
-#![feature(proc_macro_hygiene)]
+// The nightly features below are needed only so that custom_warning_macro
+// attributes can appear in statement/expression position. Gating them (and
+// every such attribute use, via cfg_attr) behind the `custom-warnings`
+// feature lets this crate compile on stable Rust by default; enabling
+// `custom-warnings` requires a nightly toolchain, as before.
+#![cfg_attr(
+    feature = "custom-warnings",
+    feature(stmt_expr_attributes, proc_macro_hygiene)
+)]
 
 // --- Public Modules ---
 // These modules contain the data structures that are passed to and from the actor.

@@ -57,7 +57,10 @@ pub trait CryptographicGroup {
     /// # Errors
     ///
     /// - `HashToScalarError` if using `P256Group` and `NistP256::hash_to_scalar` returns error
-    #[crate::warning("Verify the claim of uniformity is correct for implementations")]
+    #[cfg_attr(
+        feature = "custom-warnings",
+        crate::warning("Verify the claim of uniformity is correct for implementations")
+    )]
     fn hash_to_scalar(input_slices: &[&[u8]], ds_tags: &[&[u8]]) -> Result<Self::Scalar, Error>;
 
     /// Hash bytes into an `Element`.
@@ -67,7 +70,10 @@ pub trait CryptographicGroup {
     /// # Errors
     ///
     /// - `HashToElementError` if using `P256Group` and `NistP256::hash_from_bytes` returns error
-    #[crate::warning("Verify the claim of uniformity is correct for implementations.")]
+    #[cfg_attr(
+        feature = "custom-warnings",
+        crate::warning("Verify the claim of uniformity is correct for implementations.")
+    )]
     fn hash_to_element(input_slices: &[&[u8]], ds_tags: &[&[u8]]) -> Result<Self::Element, Error>;
 
     /// Returns a random `Element`
@@ -82,7 +88,10 @@ pub trait CryptographicGroup {
     ///
     /// - `EncodingError` if using `Ristretto255Group` and a point was not found for the input, with negligible probability
     /// - undefined if using `P256Group`
-    #[crate::warning("# Errors for this function are incompletely specified")]
+    #[cfg_attr(
+        feature = "custom-warnings",
+        crate::warning("# Errors for this function are incompletely specified")
+    )]
     fn encode_bytes<const I: usize, const O: usize>(
         bytes: &[u8; I],
     ) -> Result<[Self::Element; O], Error>;
@@ -92,7 +101,10 @@ pub trait CryptographicGroup {
     /// # Errors
     ///
     /// - undefined if using `P256Group`
-    #[crate::warning("# Errors for this function are incompletely specified")]
+    #[cfg_attr(
+        feature = "custom-warnings",
+        crate::warning("# Errors for this function are incompletely specified")
+    )]
     fn decode_bytes<const I: usize, const O: usize>(
         element: &[Self::Element; I],
     ) -> Result<[u8; O], Error>;
@@ -102,7 +114,10 @@ pub trait CryptographicGroup {
     /// # Errors
     ///
     /// - `HashToElementError` if using `P256Group` and `NistP256::hash_from_bytes` returns error
-    #[crate::warning("Verify implementations are correct")]
+    #[cfg_attr(
+        feature = "custom-warnings",
+        crate::warning("Verify implementations are correct")
+    )]
     fn ind_generators(count: usize, label: &[u8]) -> Result<Vec<Self::Element>, Error>;
 }
 

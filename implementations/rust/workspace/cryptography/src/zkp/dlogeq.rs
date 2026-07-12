@@ -160,7 +160,10 @@ impl<C: Context, const W: usize> DlogEqProof<C, W> {
     }
 
     /// Domain separation tags for the challenge input
-    #[crate::warning("Challenge inputs are incomplete.")]
+    #[cfg_attr(
+        feature = "custom-warnings",
+        crate::warning("Challenge inputs are incomplete.")
+    )]
     const DS_TAGS: [&[u8]; 7] = [
         b"g0",
         b"g1",

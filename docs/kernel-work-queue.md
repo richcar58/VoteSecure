@@ -81,6 +81,18 @@ to stable Rust (plan decision D4) and consume these crates as git dependencies; 
 declaring `#![feature(…)]` compiles only on nightly, so the first `cargo check` against the
 kernel fails on stable. Upstream contribution intended.
 
+> **Status: implemented 2026-07-11** (awaiting Rich's commit). Both crate-level gates are
+> `cfg_attr`'d on `custom-warnings`; all warning-attribute uses converted to `cfg_attr` form
+> where required (statement-position sites and proc-macro attributes on file modules — the
+> latter an unstable position the original draft had not anticipated); the conditionally-unused
+> `custom_warning` alias import is `cfg`-gated. Verified: `cargo +stable check --workspace`
+> passes; `cargo fmt --check` and `cargo clippy --workspace -- -D warnings` (pinned nightly,
+> default features) pass; warnings still emitted with `--features custom-warnings` on nightly;
+> stable release test suite run recorded in the implementing commit. Since
+> `kernel-v1.3-fork.1` had not yet been cut, this change rides in it — no `fork.2` needed for
+> Phase 2. The issue may still be posted for the record, marked as resolved by the implementing
+> commit.
+
 ### Problem
 
 `cryptography/src/lib.rs` (lines 9, 11) and `protocol/src/lib.rs` (lines 15, 17) declare
@@ -114,7 +126,8 @@ Mirror the macro's own pattern in its consumers:
 - [ ] Kernel workspace compiles on pinned stable with default features.
 - [ ] Warnings still function on nightly with `custom-warnings` enabled.
 - [ ] Existing test suite passes in both configurations.
-- [ ] Tag `kernel-v1.3-fork.2` cut after merge (the Phase 2 consumption point).
+- [ ] Included in tag `kernel-v1.3-fork.1` (the Phase 2 consumption point; the tag had not yet
+      been cut when this item was implemented, so no separate `fork.2` is needed).
 - [ ] Offered upstream to FreeAndFair/VoteSecure.
 
 ---

@@ -171,7 +171,10 @@ impl<C: Context, const W: usize> PlEqProof<C, W> {
     }
 
     /// Domain separation tags for the challenge input
-    #[crate::warning("Challenge inputs are incomplete.")]
+    #[cfg_attr(
+        feature = "custom-warnings",
+        crate::warning("Challenge inputs are incomplete.")
+    )]
     const DS_TAGS: [&[u8]; 8] = [
         b"g",
         b"y",

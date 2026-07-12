@@ -98,7 +98,10 @@ impl<C: Context, const W: usize> Shuffler<C, W> {
     ///
     /// Returns a tuple of form (commitment exponents, re-encryption exponents)
     pub(crate) fn gen_private_exponents(size: usize) -> (Vec<C::Scalar>, Vec<[C::Scalar; W]>) {
-        #[crate::warning("The following code is not optimized. Parallelize with rayon")]
+        #[cfg_attr(
+            feature = "custom-warnings",
+            crate::warning("The following code is not optimized. Parallelize with rayon")
+        )]
         (0..size)
             .into_par_iter()
             .map(|_| {
@@ -293,7 +296,10 @@ impl<C: Context, const W: usize> Shuffler<C, W> {
         // This means we start the computation at i = 1 (which is i = 2 in EVS)
         // and our vector d_n has d_n[0] = b_n[0] (d1 = b1 in EVS)
         let mut d_n = vec![b_n[0].clone()];
-        #[crate::warning("Figure out how this skip(1) behaves")]
+        #[cfg_attr(
+            feature = "custom-warnings",
+            crate::warning("Figure out how this skip(1) behaves")
+        )]
         for (i, b) in b_n.iter().enumerate().skip(1) {
             // cannot underflow, skip(1) starts at 1
             #[allow(clippy::arithmetic_side_effects)]
@@ -535,7 +541,10 @@ impl<C: Context, const W: usize> Shuffler<C, W> {
         let s_permuted = permutation.apply_inverse(&s_n)?;
 
         let r_h_permuted = r_permuted.into_par_iter().zip(h_permuted.into_par_iter());
-        #[crate::warning("The following code is not optimized. Parallelize with rayon")]
+        #[cfg_attr(
+            feature = "custom-warnings",
+            crate::warning("The following code is not optimized. Parallelize with rayon")
+        )]
         let u_n: Vec<C::Element> = r_h_permuted
             .into_par_iter()
             .map(|(r, h)| {
@@ -547,7 +556,10 @@ impl<C: Context, const W: usize> Shuffler<C, W> {
 
         let s_w_permuted = w_permuted.into_par_iter().zip(s_permuted.into_par_iter());
 
-        #[crate::warning("The following code is not optimized. Parallelize with rayon")]
+        #[cfg_attr(
+            feature = "custom-warnings",
+            crate::warning("The following code is not optimized. Parallelize with rayon")
+        )]
         let w_prime_n: Vec<Ciphertext<C, W>> = s_w_permuted
             .into_par_iter()
             .map(|(c, s)| c.re_encrypt(s, &self.pk.y))
@@ -587,17 +599,26 @@ impl<C: Context, const W: usize> Shuffler<C, W> {
         w_prime_n: &Vec<Ciphertext<C, W>>,
         context: &[u8],
     ) -> Result<Vec<C::Scalar>, Error> {
-        #[crate::warning("Serialization of vectors is serial")]
+        #[cfg_attr(
+            feature = "custom-warnings",
+            crate::warning("Serialization of vectors is serial")
+        )]
         let a = [self.pk.ser(), w_n.ser(), w_prime_n.ser(), context.to_vec()];
         let input: Vec<&[u8]> = a.iter().map(Vec::as_slice).collect();
 
         let mut hasher = C::get_hasher();
         hash::update_hasher(&mut hasher, &input, &Self::DS_TAGS_CHALLENGE_E);
-        #[crate::warning("Verify that this double hashing set up is ok")]
+        #[cfg_attr(
+            feature = "custom-warnings",
+            crate::warning("Verify that this double hashing set up is ok")
+        )]
         let bytes = hasher.finalize();
         let mut ret = vec![];
 
-        #[crate::warning("The following code is not optimized. Parallelize with rayon")]
+        #[cfg_attr(
+            feature = "custom-warnings",
+            crate::warning("The following code is not optimized. Parallelize with rayon")
+        )]
         for i in 0..w_n.len() {
             let prefix = bytes.clone();
             let inputs: &[&[u8]] = &[prefix.as_slice(), &i.to_be_bytes()];
@@ -646,7 +667,10 @@ impl<C: Context, const W: usize> Shuffler<C, W> {
         commitments: &ShuffleCommitments<C, W>,
         context: &[u8],
     ) -> ([Vec<u8>; 8], [&'static [u8]; 8]) {
-        #[crate::warning("Serialization of vectors is serial")]
+        #[cfg_attr(
+            feature = "custom-warnings",
+            crate::warning("Serialization of vectors is serial")
+        )]
         let a = [
             self.pk.ser(),
             commitments.big_b_n.ser(),
@@ -702,7 +726,10 @@ impl<C: Context, const W: usize> PermutationData<C, W> {
  *
  * See `EVS`: Protocol 12.3
  */
-#[crate::warning("Remove clone, only requried for sandbox/sr")]
+#[cfg_attr(
+    feature = "custom-warnings",
+    crate::warning("Remove clone, only requried for sandbox/sr")
+)]
 #[derive(Debug, VSer, PartialEq, Clone)]
 pub struct ShuffleProof<C: Context, const W: usize> {
     /// Proof shuffle commitments
@@ -997,7 +1024,10 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    #[crate::warning("Miri test fails (Stacked Borrows)")]
+    #[cfg_attr(
+        feature = "custom-warnings",
+        crate::warning("Miri test fails (Stacked Borrows)")
+    )]
     fn test_shuffle_ristretto() {
         test_shuffle::<RCtx, 2>();
         test_shuffle::<RCtx, 3>();
@@ -1008,7 +1038,10 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    #[crate::warning("Miri test fails (Stacked Borrows)")]
+    #[cfg_attr(
+        feature = "custom-warnings",
+        crate::warning("Miri test fails (Stacked Borrows)")
+    )]
     fn test_shuffle_invalid_ristretto() {
         test_shuffle_invalid::<RCtx, 2>();
         test_shuffle_invalid::<RCtx, 3>();
@@ -1019,7 +1052,10 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    #[crate::warning("Miri test fails (Stacked Borrows)")]
+    #[cfg_attr(
+        feature = "custom-warnings",
+        crate::warning("Miri test fails (Stacked Borrows)")
+    )]
     fn test_shuffle_p256() {
         test_shuffle::<PCtx, 2>();
         test_shuffle::<PCtx, 3>();
@@ -1029,7 +1065,10 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    #[crate::warning("Miri test fails (Stacked Borrows)")]
+    #[cfg_attr(
+        feature = "custom-warnings",
+        crate::warning("Miri test fails (Stacked Borrows)")
+    )]
     fn test_shuffle_invalid_p256() {
         test_shuffle_invalid::<PCtx, 2>();
         test_shuffle_invalid::<PCtx, 3>();
@@ -1040,28 +1079,40 @@ mod tests {
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    #[crate::warning("Miri test fails (Stacked Borrows)")]
+    #[cfg_attr(
+        feature = "custom-warnings",
+        crate::warning("Miri test fails (Stacked Borrows)")
+    )]
     fn test_shuffle_label_ristretto() {
         test_shuffle_label::<RCtx>();
     }
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    #[crate::warning("Miri test fails (Stacked Borrows)")]
+    #[cfg_attr(
+        feature = "custom-warnings",
+        crate::warning("Miri test fails (Stacked Borrows)")
+    )]
     fn test_shuffle_label_p256() {
         test_shuffle_label::<PCtx>();
     }
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    #[crate::warning("Miri test fails (Stacked Borrows)")]
+    #[cfg_attr(
+        feature = "custom-warnings",
+        crate::warning("Miri test fails (Stacked Borrows)")
+    )]
     fn test_shuffle_serialization_ristretto() {
         test_shuffle_serialization::<RCtx>();
     }
 
     #[test]
     #[cfg_attr(miri, ignore)]
-    #[crate::warning("Miri test fails (Stacked Borrows)")]
+    #[cfg_attr(
+        feature = "custom-warnings",
+        crate::warning("Miri test fails (Stacked Borrows)")
+    )]
     fn test_shuffle_serialization_p256() {
         test_shuffle_serialization::<PCtx>();
     }

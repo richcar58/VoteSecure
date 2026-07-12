@@ -30,7 +30,10 @@ pub(crate) use self::messages::Message as AscentMsg;
 /// out by the CryptographyContext hasher. Stateright will
 /// later compute its own hashes internally, but these are
 /// not used outside of stateright.
-#[crate::warning("Should use typesafe newtypes instead of type aliases")]
+#[cfg_attr(
+    feature = "custom-warnings",
+    crate::warning("Should use typesafe newtypes instead of type aliases")
+)]
 pub(crate) mod types {
     use super::AccumulatorSet;
     use super::CryptographicHash;
