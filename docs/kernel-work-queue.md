@@ -88,10 +88,11 @@ kernel fails on stable. Upstream contribution intended.
 > `custom_warning` alias import is `cfg`-gated. Verified: `cargo +stable check --workspace`
 > passes; `cargo fmt --check` and `cargo clippy --workspace -- -D warnings` (pinned nightly,
 > default features) pass; warnings still emitted with `--features custom-warnings` on nightly;
-> stable release test suite run recorded in the implementing commit. Since
-> `kernel-v1.3-fork.1` had not yet been cut, this change rides in it — no `fork.2` needed for
-> Phase 2. The issue may still be posted for the record, marked as resolved by the implementing
-> commit.
+> stable release test suite run recorded in the implementing commit. Sequencing note:
+> `kernel-v1.3-fork.1` was signed and pushed at the pre-K2 docs commit (`0fa9215`), and
+> published tags are never moved — so K2 (commit `3a100d2`) is the content of
+> **`kernel-v1.3-fork.2`**, the Phase 2 consumption point. The issue may still be posted for
+> the record, marked as resolved by the implementing commit.
 
 ### Problem
 
@@ -126,8 +127,9 @@ Mirror the macro's own pattern in its consumers:
 - [ ] Kernel workspace compiles on pinned stable with default features.
 - [ ] Warnings still function on nightly with `custom-warnings` enabled.
 - [ ] Existing test suite passes in both configurations.
-- [ ] Included in tag `kernel-v1.3-fork.1` (the Phase 2 consumption point; the tag had not yet
-      been cut when this item was implemented, so no separate `fork.2` is needed).
+- [ ] Included in tag `kernel-v1.3-fork.2` (the Phase 2 consumption point; `fork.1` was
+      published at the pre-K2 docs commit and, per the fork policy, published tags are never
+      moved).
 - [ ] Offered upstream to FreeAndFair/VoteSecure.
 
 ---
