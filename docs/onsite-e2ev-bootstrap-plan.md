@@ -70,17 +70,23 @@ commits per D9):
 
 **Remaining to complete Phase 0 (Rich):**
 
-- [ ] Ratify D2–D8 by reviewing the materialized files above (amendments welcome — each decision
-      is now a concrete file diff rather than an abstraction).
-- [ ] Confirm or amend the copyright holder line in both `LICENSE.md` files.
-- [ ] Review the staged content and make the initial signed commits in both repositories
-      (suggested: `chore: bootstrap repository per BMVS plan Phase 0`).
-- [ ] Run `pre-commit install && pre-commit install --hook-type commit-msg` in both clones.
-- [ ] Create the two private GitHub remotes; add as `origin`; push `main` (D1 remote half, D9).
-- [ ] GitHub settings on both repos: branch protection on `main` (require linear history, signed
-      commits; add the pre-commit workflow as a required status check after its first run);
-      enable Actions with a restricted/pinned actions policy.
-- [ ] Confirm the commit-signing public key is present on the GitHub account.
+- [x] Ratify D2–D8 by reviewing the materialized files above (done 2026-07-11).
+- [x] Confirm or amend the copyright holder line in both `LICENSE.md` files (done 2026-07-11).
+- [x] Review the staged content and make the initial signed commits in both repositories
+      (done 2026-07-11).
+- [ ] **Postponed until the repositories are made public** — install the pre-commit hooks in
+      both clones: tracked as [ISS-1](./onsite-e2ev-issues.md#iss-1--install-pre-commit-hooks-in-both-clones).
+- [x] Create the two private GitHub remotes; add as `origin`; push `main` (done 2026-07-11:
+      `github.com/richcar58/bmvs`, `github.com/richcar58/bmvs-verifier`).
+- [ ] **Postponed until the repositories are made public** — GitHub branch protection and
+      Actions policy: tracked as
+      [ISS-2](./onsite-e2ev-issues.md#iss-2--github-branch-protection-and-actions-policy).
+- [x] Confirm the commit-signing public key is present on the GitHub account (done 2026-07-11).
+
+**Status (2026-07-11): Phase 0 is complete**, apart from the two postponed items above.
+Postponements — these and any future ones — are tracked in the
+[BMVS issues log](./onsite-e2ev-issues.md), each with a full what/why description and a
+recommended implementation.
 
 Note: the M0 gate also requires the Phase 1 items (kernel toolchain date pin, kernel tag,
 upstream remote + cadence, kernel work queue), which are tracked separately below.
