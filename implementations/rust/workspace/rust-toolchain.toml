@@ -1,3 +1,8 @@
+# Pinned nightly date (BMVS bootstrap plan, Phase 1 item 3): a bare "nightly"
+# channel resolves to a different compiler on every machine and every day,
+# which is untenable for reproducible, certifiable builds. The pinned date
+# matches the nightly previously in use in the development environment.
+# Upstreaming candidate.
 [toolchain]
-channel = "nightly"
+channel = "nightly-2026-07-09"
 components = ["rustfmt", "clippy"]
