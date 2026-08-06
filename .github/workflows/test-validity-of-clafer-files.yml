@@ -26,8 +26,15 @@ jobs:
         id: generate-matrix
         shell: bash
         run: |
-          # Find all .cfr files and convert to JSON array
-          files=$(find . -type f -name '*.cfr' -print0 | xargs -0 -n1 printf "%s\n" | jq -R . | jq -s .)
+          # Find all self-contained .cfr files and convert to a JSON array.
+          # The Needham-Schroeder PLE fragments (ple.cfr and the vendored
+          # prelude in ple/) do not typecheck individually; they are
+          # validated as an assembled model by `make ci` in
+          # test-validity-of-needham-schroeder.yml.
+          files=$(find . -type f -name '*.cfr' \
+                    -not -path './examples/needham-schroeder/ple.cfr' \
+                    -not -path './examples/needham-schroeder/ple/*' \
+                    -print0 | xargs -0 -n1 printf "%s\n" | jq -R . | jq -s .)
           # Set the output using multiline syntax
           echo "clafer-files<<EOF" >> $GITHUB_OUTPUT
           echo "$files" >> $GITHUB_OUTPUT

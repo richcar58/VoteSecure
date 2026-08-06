@@ -1,6 +1,23 @@
 # VoteSecure Change Log
 
-This change log lists changes to VoteSecure with each released version. It is not comprehensive (i.e., it does not include non-material changes like fixes for typographical errors, updates to the continuous integration scripts, etc.).
+This change log lists changes to VoteSecure with each released version. It is not comprehensive (i.e., it does not include non-material changes like fixes for typographical errors, updates to the continuous integration scripts, etc.). Starting with version 1.4, the change log explicitly calls out the impact of each change on integrators.
+
+## [Version 1.4](https://github.com/FreeAndFair/VoteSecure/releases/tag/v1_4) - 30 July 2026
+
+- replaced the digital ballot box's internal storage with a design where the voter authorization issued by the election administration server is sent only to the voting application, which includes it in both its ballot submission and ballot casting messages; the digital ballot box now holds no persistent storage of its own, answering every check (prior authorization, prior submission, prior cast) directly from the public bulletin board
+  - *Impact:* The digital ballot box actor's constructor no longer takes a storage argument, and the `DBBStorage` trait has been removed. The voter authorization message (formerly `AuthVoterMsg`) is now a `VoterAuthorization` token, defined in the `elections` module, and is sent to the voting application upon successful authentication; it must be retained by the voting application and included with ballot submissions and cast requests. The election administration server no longer communicates with the digital ballot box.
+- updated Tamarin models to account for the changes to voter authorization, and to improve their general structure and performance; this lays the groundwork for more extensive protocol verification going forward
+  - *Impact:* None
+- replaced `BulletinBoard::append_bulletin` with `BulletinBoard::append_bulletin_atomic`, which atomically evaluates board-dependent checks (e.g. no prior cast for a voter, no duplicate ciphertext) together with the append itself. This allows `BulletinBoard` implementations backed by storage that can be written to concurrently (e.g. a database shared by multiple digital ballot box instances) to guarantee those checks aren't invalidated by time of check/time of use data races.
+  - *Impact:* Any `BulletinBoard` implementation must implement `append_bulletin_atomic` instead of `append_bulletin`; implementations backed by storage that may be concurrently written by other actors must provide real atomicity (e.g. via a transaction, lock, or unique constraints plus retry on conflict) rather than relying on single-writer behavior.
+- renamed `HandTokenMsg`/`HandTokenMsgData` to `AuthServiceTokenMsg`/`AuthServiceTokenMsgData` (and the corresponding `ProtocolMsg` variant) in the voter authentication specification, for additional clarity about the message's contents
+  - *Impact:* Any code referencing the old names must be updated.
+- changed the data structures that represent bulletin board entries ("bulletins") so that custom bulletin types can be added by integrators
+  - *Impact:* Any code that used the v1.0-v1.3 bulletin types must be rewritten to use the new bulletin types.
+- added a check at ballot submit time for a cast ballot with the same voter pseudonym
+  - *Impact:* An attempt to submit a ballot for a voter who has already cast a ballot will fail at the protocol level immediately, rather than needing to be detected/prevented at the application level or causing a failure at attempted cast time.
+- removed Stateright from production builds; it is only used for testing, but was previously linked into all builds
+  - *Impact:* None
 
 ## [Version 1.3](https://github.com/FreeAndFair/VoteSecure/releases/tag/v1_3) - 15 May 2026
 

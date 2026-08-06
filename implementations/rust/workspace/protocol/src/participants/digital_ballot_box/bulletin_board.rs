@@ -8,9 +8,9 @@
 //! the tamper-evident chain of bulletins. Each bulletin is linked to the previous
 //! one via cryptographic hash, creating an immutable audit trail.
 
-use crate::bulletins::Bulletin;
-use crate::cryptography::{Digest, Hasher256, HasherTrait, VSerializable};
-use crate::elections::{BallotTracker, VoterPseudonym};
+use crate::bulletins::{Bulletin, BulletinTypeRegistry};
+use crate::cryptography::{BallotCiphertext, Digest, Hasher256, HasherTrait, VSerializable};
+use crate::elections::{BulletinTracker, VoterPseudonym};
 use std::collections::HashMap;
 
 // =============================================================================
@@ -23,21 +23,6 @@ use std::collections::HashMap;
 /// each bulletin contains a hash of the previous bulletin, creating an
 /// immutable audit trail.
 pub trait BulletinBoard: Clone + std::fmt::Debug {
-    /// Append a signed bulletin to the board.
-    ///
-    /// The DBB has already signed the bulletin before passing it here.
-    /// This method validates the previous_hash matches the last bulletin,
-    /// computes the hash of this bulletin (which becomes its tracker),
-    /// stores the bulletin, and returns the tracker.
-    ///
-    /// # Arguments
-    /// * `bulletin` - The signed bulletin to append
-    ///
-    /// # Returns
-    /// * `Ok(tracker)` - The hash/tracker of the appended bulletin
-    /// * `Err(msg)` - If validation fails
-    fn append_bulletin(&mut self, bulletin: Bulletin) -> Result<BallotTracker, String>;
-
     /// Get a bulletin by its tracker (hash).
     ///
     /// # Arguments
@@ -47,7 +32,7 @@ pub trait BulletinBoard: Clone + std::fmt::Debug {
     /// * `Ok(Some(bulletin))` - If found
     /// * `Ok(None)` - If not found
     /// * `Err(msg)` - If an error occurs
-    fn get_bulletin(&self, tracker: &BallotTracker) -> Result<Option<Bulletin>, String>;
+    fn get_bulletin(&self, tracker: &BulletinTracker) -> Result<Option<Bulletin>, String>;
 
     /// Get all bulletins in order.
     ///
@@ -57,11 +42,13 @@ pub trait BulletinBoard: Clone + std::fmt::Debug {
     /// Get bulletins of a specific type.
     ///
     /// # Arguments
-    /// * `bulletin_type` - The type of bulletins to retrieve
+    /// * `bulletin_type` - The type name of bulletins to retrieve (see the
+    ///   `*_TYPE` constants in [`crate::bulletins`])
     ///
     /// # Returns
-    /// A vector of bulletins matching the specified type.
-    fn get_bulletins_by_type(&self, bulletin_type: BulletinType) -> Vec<Bulletin>;
+    /// A vector of bulletins whose [`BulletinContents::type_name`] matches
+    /// `bulletin_type`, in the order they appear on the board.
+    fn get_bulletins_by_type(&self, bulletin_type: &str) -> Vec<Bulletin>;
 
     /// Get bulletins associated with a specific voter pseudonym.
     ///
@@ -72,6 +59,39 @@ pub trait BulletinBoard: Clone + std::fmt::Debug {
     /// A vector of bulletins matching the specified pseudonym, in
     /// the order in which they appear on the bulletin board.
     fn get_bulletins_by_pseudonym(&self, voter_pseudonym: VoterPseudonym) -> Vec<Bulletin>;
+
+    /// Get bulletins of a specific type associated with a specific voter pseudonym.
+    ///
+    /// # Arguments
+    /// * `bulletin_type` - The type name of bulletins to retrieve (see the
+    ///   `*_TYPE` constants in [`crate::bulletins`])
+    /// * `voter_pseudonym` - The pseudonym to retrieve
+    ///
+    /// # Returns
+    /// A vector of bulletins matching the specified type and pseudonym, in
+    /// the order in which they appear on the bulletin board.
+    fn get_bulletins_by_type_and_pseudonym(
+        &self,
+        bulletin_type: &str,
+        voter_pseudonym: VoterPseudonym,
+    ) -> Vec<Bulletin>;
+
+    /// Check the bulletin board for any bulletins of the built-in ballot submission
+    /// and ballot cast types containing the given ciphertext. This is used to detect
+    /// various cryptographic attacks (see the threat model); this API allows this
+    /// check to be optimized by the bulletin board implementation (e.g. by
+    /// maintaining an index of ciphertexts on the back end) rather than forcing the
+    /// digital ballot box to perform a full scan of all bulletins at the Rust data
+    /// structure level.
+    ///
+    /// # Arguments
+    /// * `ciphertext` - The ciphertext to check for duplicates
+    ///
+    /// # Returns
+    /// * `Ok(true)` - If a bulletin with the same ciphertext exists
+    /// * `Ok(false)` - If no bulletin with the same ciphertext exists
+    /// * `Err(msg)` - If an error occurs during the check
+    fn has_ciphertext(&self, ciphertext: &BallotCiphertext) -> Result<bool, String>;
 
     /// Get the hash of the most recent bulletin.
     ///
@@ -92,14 +112,47 @@ pub trait BulletinBoard: Clone + std::fmt::Debug {
     /// * `Ok(())` - If the chain is valid
     /// * `Err(msg)` - If validation fails
     fn validate_chain(&self) -> Result<(), String>;
-}
 
-/// Types of bulletins that can be posted to the bulletin board.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
-pub enum BulletinType {
-    BallotSubmission,
-    VoterAuthorization,
-    BallotCast,
+    /// Atomically build and append a bulletin.
+    ///
+    /// This is the only way to post a bulletin to the board — there is no
+    /// separate, unchecked append. Callers whose checks depend on the
+    /// current board state (e.g. "no cast bulletin already exists for this
+    /// pseudonym", "this ciphertext isn't already posted") must perform
+    /// those checks and construct the resulting signed [`Bulletin`]
+    /// (including reading [`get_last_bulletin_hash`][Self::get_last_bulletin_hash]
+    /// for its `previous_bb_msg_hash`), inside `build` rather than reading
+    /// the board separately beforehand. This lets concurrent implementations
+    /// (e.g., a database shared by multiple DBB replicas) guarantee the
+    /// checks and the append are atomic, preventing time-of-check to
+    /// time-of-use races. An unconditional append (no board-dependent checks
+    /// needed) is just `append_bulletin_atomic(|_| Ok(bulletin))`. If `build`
+    /// returns an `Err`, the board *must* be left unchanged and the error
+    /// returned to the caller.
+    ///
+    /// Implementations backed by storage that may be concurrently written
+    /// by other actors must provide this atomicity (e.g., via a transaction
+    /// or lock held for the duration of `build` and the append, or via
+    /// unique constraints plus retry on conflict). `build` may be invoked
+    /// more than once by an implementation using optimistic-retry
+    /// concurrency control, so it must be a *pure function* of the board
+    /// state it's given: only reads via `&Self`, with no other side
+    /// effects. Implementations where `&mut self` already implies
+    /// exclusive access (e.g. [`InMemoryBulletinBoard`]) can simply call
+    /// `build` once, since Rust's borrow checker rules out any other
+    /// writer running concurrently against the same in-process value.
+    ///
+    /// # Arguments
+    /// * `build` - Given a read-only view of the current board state,
+    ///   performs any board-dependent checks and returns the fully
+    ///   constructed, signed bulletin to append, or an `Err` if those
+    ///   checks fail (in which case nothing is appended).
+    /// # Returns
+    /// * `Ok(tracker)` - The tracker of the appended bulletin
+    /// * `Err(msg)` - If `build` failed, or if the append itself failed
+    fn append_bulletin_atomic<F>(&mut self, build: F) -> Result<BulletinTracker, String>
+    where
+        F: Fn(&Self) -> Result<Bulletin, String>;
 }
 
 // =============================================================================
@@ -116,11 +169,15 @@ pub struct InMemoryBulletinBoard {
     bulletins: Vec<Bulletin>,
 
     /// Maps bulletin trackers (hashes) to their index in the bulletins vector.
-    bulletin_hashes: HashMap<BallotTracker, usize>,
+    bulletin_hashes: HashMap<BulletinTracker, usize>,
+
+    /// Registry used to deserialize bulletin contents.
+    pub registry: BulletinTypeRegistry,
 }
 
 impl InMemoryBulletinBoard {
-    /// Create a new empty bulletin board.
+    /// Create a new empty bulletin board with the default registry
+    /// (built-in bulletin types pre-registered).
     ///
     /// # Returns
     /// An `InMemoryBulletinBoard` with no bulletins.
@@ -128,6 +185,20 @@ impl InMemoryBulletinBoard {
         Self {
             bulletins: Vec::new(),
             bulletin_hashes: HashMap::new(),
+            registry: BulletinTypeRegistry::new(),
+        }
+    }
+
+    /// Create a new empty bulletin board with a custom registry.
+    ///
+    /// Use this when integrating custom bulletin types: construct a
+    /// [`BulletinTypeRegistry`], register your types on it,
+    /// then pass it here.
+    pub fn with_registry(registry: BulletinTypeRegistry) -> Self {
+        Self {
+            bulletins: Vec::new(),
+            bulletin_hashes: HashMap::new(),
+            registry,
         }
     }
 
@@ -141,39 +212,21 @@ impl InMemoryBulletinBoard {
     /// # Returns
     /// A hex-encoded SHA3-256 hash string.
     fn compute_bulletin_hash(&self, bulletin: &Bulletin) -> String {
-        let serialized = match bulletin {
-            Bulletin::BallotSubmission(b) => b.ser(),
-            Bulletin::VoterAuthorization(b) => b.ser(),
-            Bulletin::BallotCast(b) => b.ser(),
-        };
-
         let mut hasher = Hasher256::hasher();
-        hasher.update(&serialized);
+        hasher.update(bulletin.ser());
         let result = hasher.finalize();
         hex::encode(result)
     }
 
-    /// Get the previous_bb_msg_hash field from a bulletin.
-    fn get_previous_hash<'a>(&self, bulletin: &'a Bulletin) -> &'a String {
-        match bulletin {
-            Bulletin::BallotSubmission(b) => &b.data.previous_bb_msg_hash,
-            Bulletin::VoterAuthorization(b) => &b.data.previous_bb_msg_hash,
-            Bulletin::BallotCast(b) => &b.data.previous_bb_msg_hash,
-        }
-    }
-}
-
-impl Default for InMemoryBulletinBoard {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl BulletinBoard for InMemoryBulletinBoard {
-    fn append_bulletin(&mut self, bulletin: Bulletin) -> Result<BallotTracker, String> {
+    /// Validate `bulletin`'s `previous_bb_msg_hash` against the current
+    /// head, then store it. Not part of the `BulletinBoard` trait — only
+    /// reachable through [`BulletinBoard::append_bulletin_atomic`], so
+    /// every append goes through the checked path; see that method's
+    /// documentation for why a separate, unchecked append isn't exposed.
+    fn append_bulletin_internal(&mut self, bulletin: Bulletin) -> Result<BulletinTracker, String> {
         // Validate that previous_hash matches the last bulletin's hash
         let expected_previous_hash = self.get_last_bulletin_hash().unwrap_or_default();
-        let actual_previous_hash = self.get_previous_hash(&bulletin);
+        let actual_previous_hash = &bulletin.data.previous_bb_msg_hash;
 
         if *actual_previous_hash != expected_previous_hash {
             return Err(format!(
@@ -192,8 +245,26 @@ impl BulletinBoard for InMemoryBulletinBoard {
 
         Ok(tracker)
     }
+}
 
-    fn get_bulletin(&self, tracker: &BallotTracker) -> Result<Option<Bulletin>, String> {
+impl Default for InMemoryBulletinBoard {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl BulletinBoard for InMemoryBulletinBoard {
+    fn append_bulletin_atomic<F>(&mut self, build: F) -> Result<BulletinTracker, String>
+    where
+        F: Fn(&Self) -> Result<Bulletin, String>,
+    {
+        // `&mut self` is already exclusive access in-process, so `build` is
+        // only ever called once here; no concurrent writer can interleave.
+        let bulletin = build(self)?;
+        self.append_bulletin_internal(bulletin)
+    }
+
+    fn get_bulletin(&self, tracker: &BulletinTracker) -> Result<Option<Bulletin>, String> {
         Ok(self
             .bulletin_hashes
             .get(tracker)
@@ -204,21 +275,10 @@ impl BulletinBoard for InMemoryBulletinBoard {
         self.bulletins.clone()
     }
 
-    fn get_bulletins_by_type(&self, bulletin_type: BulletinType) -> Vec<Bulletin> {
+    fn get_bulletins_by_type(&self, bulletin_type: &str) -> Vec<Bulletin> {
         self.bulletins
             .iter()
-            .filter(|b| {
-                matches!(
-                    (bulletin_type, b),
-                    (
-                        BulletinType::BallotSubmission,
-                        Bulletin::BallotSubmission(_)
-                    ) | (
-                        BulletinType::VoterAuthorization,
-                        Bulletin::VoterAuthorization(_)
-                    ) | (BulletinType::BallotCast, Bulletin::BallotCast(_))
-                )
-            })
+            .filter(|b| b.data.contents.type_name() == bulletin_type)
             .cloned()
             .collect()
     }
@@ -226,17 +286,77 @@ impl BulletinBoard for InMemoryBulletinBoard {
     fn get_bulletins_by_pseudonym(&self, voter_pseudonym: VoterPseudonym) -> Vec<Bulletin> {
         self.bulletins
             .iter()
-            .filter(|b| match b {
-                Bulletin::BallotSubmission(bs) => {
-                    bs.data.ballot.data.voter_pseudonym == voter_pseudonym
-                }
-                Bulletin::BallotCast(bc) => bc.data.ballot.data.voter_pseudonym == voter_pseudonym,
-                Bulletin::VoterAuthorization(va) => {
-                    va.data.authorization.data.voter_pseudonym == voter_pseudonym
-                }
+            .filter(|b| b.data.contents.voter_pseudonym().as_deref() == Some(&voter_pseudonym))
+            .cloned()
+            .collect()
+    }
+
+    fn get_bulletins_by_type_and_pseudonym(
+        &self,
+        bulletin_type: &str,
+        voter_pseudonym: VoterPseudonym,
+    ) -> Vec<Bulletin> {
+        self.bulletins
+            .iter()
+            .filter(|b| {
+                b.data.contents.type_name() == bulletin_type
+                    && b.data.contents.voter_pseudonym().as_deref() == Some(&voter_pseudonym)
             })
             .cloned()
             .collect()
+    }
+
+    fn has_ciphertext(&self, ciphertext: &BallotCiphertext) -> Result<bool, String> {
+        for b in &self.bulletins {
+            match b.data.contents.type_name() {
+                crate::bulletins::BALLOT_SUBMISSION_BULLETIN => {
+                    let contents = b
+                        .data
+                        .contents
+                        .as_any()
+                        .downcast_ref::<crate::bulletins::BallotSubContents>()
+                        .ok_or_else(|| {
+                            format!(
+                                "Failed to downcast contents of bulletin with type '{}'",
+                                b.data.contents.type_name()
+                            )
+                        })?;
+                    if contents
+                        .ballot
+                        .data
+                        .ballot_cryptogram
+                        .ciphertext
+                        .eq(ciphertext)
+                    {
+                        return Ok(true);
+                    }
+                }
+                crate::bulletins::BALLOT_CAST_BULLETIN => {
+                    let contents = b
+                        .data
+                        .contents
+                        .as_any()
+                        .downcast_ref::<crate::bulletins::BallotCastContents>()
+                        .ok_or_else(|| {
+                            format!(
+                                "Failed to downcast contents of bulletin with type '{}'",
+                                b.data.contents.type_name()
+                            )
+                        })?;
+                    if contents
+                        .ballot
+                        .data
+                        .ballot_cryptogram
+                        .ciphertext
+                        .eq(ciphertext)
+                    {
+                        return Ok(true);
+                    }
+                }
+                _ => { /* bulletin is of a type with no ballot ciphertext */ }
+            }
+        }
+        Ok(false)
     }
 
     fn get_last_bulletin_hash(&self) -> Option<String> {
@@ -251,18 +371,17 @@ impl BulletinBoard for InMemoryBulletinBoard {
         }
 
         // First bulletin should have empty previous_hash
-        let first_previous_hash = self.get_previous_hash(&self.bulletins[0]);
-        if !first_previous_hash.is_empty() {
+        if !self.bulletins[0].data.previous_bb_msg_hash.is_empty() {
             return Err(format!(
                 "First bulletin should have empty previous_hash, got '{}'",
-                first_previous_hash
+                self.bulletins[0].data.previous_bb_msg_hash
             ));
         }
 
         // Check each subsequent bulletin
         for i in 1..self.bulletins.len() {
             let expected_previous_hash = self.compute_bulletin_hash(&self.bulletins[i - 1]);
-            let actual_previous_hash = self.get_previous_hash(&self.bulletins[i]);
+            let actual_previous_hash = &self.bulletins[i].data.previous_bb_msg_hash;
 
             if *actual_previous_hash != expected_previous_hash {
                 return Err(format!(
@@ -283,8 +402,11 @@ impl BulletinBoard for InMemoryBulletinBoard {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bulletins::{BallotSubBulletin, BallotSubBulletinData};
+    use crate::bulletins::{
+        BALLOT_CAST_BULLETIN, BALLOT_SUBMISSION_BULLETIN, BallotSubContents, BulletinData,
+    };
     use crate::cryptography::{Signature, generate_signature_keypair};
+    use crate::elections::VoterAuthorization;
     use crate::elections::string_to_election_hash;
     use crate::messages::SignedBallotMsgData;
 
@@ -301,11 +423,15 @@ mod tests {
         )
         .unwrap();
 
+        let voter_authorization = VoterAuthorization::test_voter_authorization(
+            string_to_election_hash("test_election"),
+            "voter123",
+            1,
+            verifying_key,
+        );
+
         let ballot_msg_data = SignedBallotMsgData {
-            election_hash: string_to_election_hash("test_election"),
-            voter_pseudonym: "voter123".to_string(),
-            voter_verifying_key: verifying_key,
-            ballot_style: 1,
+            voter_authorization,
             ballot_cryptogram,
         };
 
@@ -314,17 +440,15 @@ mod tests {
             signature: Signature::from_bytes(&[0u8; 64]),
         };
 
-        let data = BallotSubBulletinData {
-            election_hash: string_to_election_hash("test_election"),
-            timestamp: 1640995200,
-            ballot: ballot_msg,
-            previous_bb_msg_hash: previous_hash,
-        };
-
-        Bulletin::BallotSubmission(BallotSubBulletin {
-            data,
+        Bulletin {
+            data: BulletinData {
+                election_hash: string_to_election_hash("test_election"),
+                contents: Box::new(BallotSubContents { ballot: ballot_msg }),
+                timestamp: 1640995200,
+                previous_bb_msg_hash: previous_hash,
+            },
             signature: "test_signature".to_string(),
-        })
+        }
     }
 
     #[test]
@@ -341,7 +465,9 @@ mod tests {
         let mut board = InMemoryBulletinBoard::new();
         let bulletin = create_test_ballot_submission(String::new());
 
-        let tracker = board.append_bulletin(bulletin.clone()).unwrap();
+        let tracker = board
+            .append_bulletin_atomic(|_| Ok(bulletin.clone()))
+            .unwrap();
 
         assert!(!tracker.is_empty());
         assert_eq!(board.get_all_bulletins().len(), 1);
@@ -354,15 +480,21 @@ mod tests {
 
         // First bulletin with empty previous hash
         let bulletin1 = create_test_ballot_submission(String::new());
-        let tracker1 = board.append_bulletin(bulletin1).unwrap();
+        let tracker1 = board
+            .append_bulletin_atomic(|_| Ok(bulletin1.clone()))
+            .unwrap();
 
         // Second bulletin with previous hash = tracker1
         let bulletin2 = create_test_ballot_submission(tracker1.clone());
-        let tracker2 = board.append_bulletin(bulletin2).unwrap();
+        let tracker2 = board
+            .append_bulletin_atomic(|_| Ok(bulletin2.clone()))
+            .unwrap();
 
         // Third bulletin with previous hash = tracker2
         let bulletin3 = create_test_ballot_submission(tracker2.clone());
-        let tracker3 = board.append_bulletin(bulletin3).unwrap();
+        let tracker3 = board
+            .append_bulletin_atomic(|_| Ok(bulletin3.clone()))
+            .unwrap();
 
         assert_eq!(board.get_all_bulletins().len(), 3);
         assert_eq!(board.get_last_bulletin_hash().unwrap(), tracker3);
@@ -372,7 +504,9 @@ mod tests {
     fn test_get_bulletin_by_tracker() {
         let mut board = InMemoryBulletinBoard::new();
         let bulletin = create_test_ballot_submission(String::new());
-        let tracker = board.append_bulletin(bulletin.clone()).unwrap();
+        let tracker = board
+            .append_bulletin_atomic(|_| Ok(bulletin.clone()))
+            .unwrap();
 
         let retrieved = board.get_bulletin(&tracker).unwrap();
         assert!(retrieved.is_some());
@@ -388,12 +522,53 @@ mod tests {
 
         // First bulletin succeeds
         let bulletin1 = create_test_ballot_submission(String::new());
-        board.append_bulletin(bulletin1).unwrap();
+        board
+            .append_bulletin_atomic(|_| Ok(bulletin1.clone()))
+            .unwrap();
 
         // Second bulletin with wrong previous hash should fail
         let bulletin2 = create_test_ballot_submission("wrong_hash".to_string());
-        let result = board.append_bulletin(bulletin2);
+        let result = board.append_bulletin_atomic(|_| Ok(bulletin2.clone()));
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_append_bulletin_atomic_build_failure_appends_nothing() {
+        let mut board = InMemoryBulletinBoard::new();
+
+        // A failing build should leave the board untouched.
+        let result: Result<BulletinTracker, String> =
+            board.append_bulletin_atomic(|_| Err("checks failed".to_string()));
+        assert!(result.is_err());
+        assert!(board.get_all_bulletins().is_empty());
+        assert!(board.get_last_bulletin_hash().is_none());
+    }
+
+    #[test]
+    fn test_append_bulletin_atomic_build_sees_current_state() {
+        let mut board = InMemoryBulletinBoard::new();
+
+        // `build` reads the board's current head to chain correctly,
+        // rather than the caller computing it beforehand.
+        let tracker1 = board
+            .append_bulletin_atomic(|bb| {
+                Ok(create_test_ballot_submission(
+                    bb.get_last_bulletin_hash().unwrap_or_default(),
+                ))
+            })
+            .unwrap();
+
+        let tracker2 = board
+            .append_bulletin_atomic(|bb| {
+                Ok(create_test_ballot_submission(
+                    bb.get_last_bulletin_hash().unwrap_or_default(),
+                ))
+            })
+            .unwrap();
+
+        assert_ne!(tracker1, tracker2);
+        assert_eq!(board.get_all_bulletins().len(), 2);
+        assert!(board.validate_chain().is_ok());
     }
 
     #[test]
@@ -402,10 +577,14 @@ mod tests {
 
         // Build a valid chain
         let bulletin1 = create_test_ballot_submission(String::new());
-        let tracker1 = board.append_bulletin(bulletin1).unwrap();
+        let tracker1 = board
+            .append_bulletin_atomic(|_| Ok(bulletin1.clone()))
+            .unwrap();
 
         let bulletin2 = create_test_ballot_submission(tracker1);
-        board.append_bulletin(bulletin2).unwrap();
+        board
+            .append_bulletin_atomic(|_| Ok(bulletin2.clone()))
+            .unwrap();
 
         // Chain should be valid
         assert!(board.validate_chain().is_ok());
@@ -417,18 +596,22 @@ mod tests {
 
         // Add ballot submission bulletins
         let bulletin1 = create_test_ballot_submission(String::new());
-        let tracker1 = board.append_bulletin(bulletin1).unwrap();
+        let tracker1 = board
+            .append_bulletin_atomic(|_| Ok(bulletin1.clone()))
+            .unwrap();
 
         let bulletin2 = create_test_ballot_submission(tracker1);
-        board.append_bulletin(bulletin2).unwrap();
+        board
+            .append_bulletin_atomic(|_| Ok(bulletin2.clone()))
+            .unwrap();
 
         // Get all ballot submission bulletins
-        let submissions = board.get_bulletins_by_type(BulletinType::BallotSubmission);
+        let submissions = board.get_bulletins_by_type(BALLOT_SUBMISSION_BULLETIN);
         assert_eq!(submissions.len(), 2);
 
-        // Get voter authorization bulletins (should be empty)
-        let auths = board.get_bulletins_by_type(BulletinType::VoterAuthorization);
-        assert_eq!(auths.len(), 0);
+        // Get ballot cast bulletins (should be empty)
+        let casts = board.get_bulletins_by_type(BALLOT_CAST_BULLETIN);
+        assert_eq!(casts.len(), 0);
     }
 
     #[test]

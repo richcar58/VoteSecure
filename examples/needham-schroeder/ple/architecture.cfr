@@ -1,0 +1,141 @@
+// ========================================================================
+// Architecture Metamodel
+//
+// @dependencies prelude.cfr
+// ========================================================================
+
+// A Clafer-based architecture specification for demonstrating
+// architectural refinement and design choices as a means by which to
+// fulfill some non-behavioral requirements.
+
+// Clafer comes with both a generic architecture specification metamodel
+// as well as an AADL metamodel.  We will use only the former here.
+
+abstract System
+  subSystems -> Subsystem *
+  [ all s:subSystems | s.parentSystem = this ]
+
+abstract Subsystem
+  parentSystem -> System ?
+  parentSubsystem -> Subsystem ?
+  subSystems -> Subsystem *
+  [ parentSystem xor parentSubsystem ]
+  [ parentSystem => this in parentSystem.subSystems ]
+  [ parentSubsystem => (all s:subSystems | s.parentSubsystem = this) ]
+
+// Here is an example of use of `System` and `Subsystem`,
+// demonstrating the nested minimal set of subsystems.
+
+s: System
+
+ss: Subsystem
+  [ parentSystem = s ]
+  [ subSystems = sss ]
+
+sss: Subsystem
+  [ parentSubsystem = ss ]
+
+// Next we define `Component`s and logical information `Flow`s between
+// `SoftwareComponent`s.
+
+abstract Component
+  enclosingSubsystem -> Subsystem
+
+abstract Flow
+  start -> SoftwareComponent
+  end -> SoftwareComponent
+  // the concrete channel for this flow is either a bus or a network
+  mux channel
+    bus -> Bus ?         // the bus that implements the flow, or
+    network -> Network ? // the network that implements the flow
+  rate -> integer        // the maximum datarate in Kb/s that the flow demands
+  [ 0 < rate ]
+  [ channel.bus => (this in channel.bus.flows) ]
+  [ channel.network => (this in channel.network.flows) ]
+
+arbitraryComponent: Component
+  [ enclosingSubsystem = arbitrarySubsystem ]
+arbitrarySubsystem: Subsystem
+  [ parentSystem = arbitrarySystem ]
+arbitrarySystem: System
+  [ subSystems = arbitrarySubsystem ]
+// A concrete `arbitraryFlow` (with its `Bus` and `SoftwareTopology`) is defined
+// at the end of this module, once the connector/component types are in scope.
+
+// =====================================================================
+// Primitive types: SoftwareComponent, HardwareComponent
+// Connectors: Channel, Bus, and Network
+// Aggregate flow descriptions: SoftwareTopology
+// =====================================================================
+
+abstract HardwareComponent: Component
+  software -> SoftwareComponent * // the software running on this hardware
+  [ all s : software | s.target = this ]        // inverse relationship constraint
+  mappable ?
+  [ ! mappable => ! software]
+
+abstract SoftwareComponent: Component
+  target -> HardwareComponent  // hardware this software component is running on
+  [this in target.software]    // inverse relationship constraint
+
+abstract Channel: HardwareComponent
+  [ ! mappable]
+  capacity -> integer // the maximum datarate in Kb/s that this channel supports
+  flows -> Flow *   // the flows that this channel implements
+  components -> HardwareComponent * // the components the channel connects
+  // components include every flow endpoint (superset; exact = blocked by #484)
+  [ all f : flows | f.start.target in components ]
+  [ all f : flows | f.end.target in components ]
+  [(sum flows.rate) <= capacity]    // channel capacity constraint
+
+abstract Bus: Channel
+  [ all f : flows | f.channel.bus = this ]
+
+abstract Network: Channel
+  [ all f : flows | f.channel.network = this ]
+
+// A SoftwareTopology aggregates flows and asserts each is well-placed: either
+// co-located (no channel, endpoints on the same host) or carried by a
+// bus/network whose components include both endpoints' hosts.
+abstract SoftwareTopology: Component
+  flows -> Flow *
+  [ all f : flows |
+      (no f.channel.bus && no f.channel.network && f.start.target = f.end.target)
+      || (some f.channel.bus
+          && f.start.target in f.channel.bus.components
+          && f.end.target in f.channel.bus.components)
+      || (some f.channel.network
+          && f.start.target in f.channel.network.components
+          && f.end.target in f.channel.network.components) ]
+
+arbitraryHardwareComponent: HardwareComponent
+  [ software = arbitrarySoftwareComponent ]
+arbitrarySoftwareComponent: SoftwareComponent
+  [ target = arbitraryHardwareComponent ]
+
+// ---- Concrete example: a flow between two hosts over a bus, in a topology ----
+// (demonstrates the metamodel and witnesses that concrete Flow/Bus/Channel/
+//  SoftwareTopology instances are well-typed and inhabited under Chocosolver).
+
+arbitraryHardwareComponent2: HardwareComponent
+  [ enclosingSubsystem = arbitrarySubsystem ]
+  [ software = arbitrarySoftwareComponent2 ]
+arbitrarySoftwareComponent2: SoftwareComponent
+  [ enclosingSubsystem = arbitrarySubsystem ]
+  [ target = arbitraryHardwareComponent2 ]
+
+arbitraryFlow: Flow
+  [ start = arbitrarySoftwareComponent ]
+  [ end = arbitrarySoftwareComponent2 ]
+  [ channel.bus = arbitraryBus ]
+  [ ! channel.network ]
+  [ rate = 10 ]
+
+arbitraryBus: Bus
+  [ enclosingSubsystem = arbitrarySubsystem ]
+  [ flows = arbitraryFlow ]
+  [ capacity = 100 ]
+
+arbitraryTopology: SoftwareTopology
+  [ enclosingSubsystem = arbitrarySubsystem ]
+  [ flows = arbitraryFlow ]

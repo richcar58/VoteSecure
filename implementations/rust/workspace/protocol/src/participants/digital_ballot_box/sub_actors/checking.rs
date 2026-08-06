@@ -15,14 +15,14 @@
 // currently ignored for code simplicity until performance data is analyzed
 #![allow(clippy::large_enum_variant)]
 
-use crate::bulletins::{Bulletin, Bulletin::BallotSubmission};
+use crate::bulletins::{BALLOT_CAST_BULLETIN, BallotSubContents};
 use crate::cryptography::{SigningKey, verify_signature};
 use crate::elections::{BallotTracker, ElectionHash};
 use crate::messages::{
     CheckReqMsg, FwdCheckReqMsg, FwdCheckReqMsgData, FwdRandomizerMsg, FwdRandomizerMsgData,
     ProtocolMsg, RandomizerMsg,
 };
-use crate::participants::digital_ballot_box::{bulletin_board::BulletinBoard, storage::DBBStorage};
+use crate::participants::digital_ballot_box::bulletin_board::BulletinBoard;
 use cryptography::utils::serialization::VSerializable;
 
 /// Inputs accepted by the checking sub-actor.
@@ -115,22 +115,20 @@ impl CheckingActor {
     ///
     /// # Arguments
     /// * `input` - The input to process.
-    /// * `storage` - Reference to the DBB storage.
     /// * `bulletin_board` - Reference to the bulletin board.
     ///
     /// # Returns
     /// `Ok(output)` describing the result, or `Err(msg)` if an error occurs.
-    pub fn process_input<S: DBBStorage, B: BulletinBoard>(
+    pub fn process_input<B: BulletinBoard>(
         &mut self,
         input: CheckingInput,
-        storage: &S,
         bulletin_board: &B,
     ) -> Result<CheckingOutput, String> {
         match input {
             CheckingInput::NetworkMessage {
                 connection_id: _,
                 message,
-            } => self.handle_network_message(message, storage, bulletin_board),
+            } => self.handle_network_message(message, bulletin_board),
             CheckingInput::VAConnectionProvided(va_conn_id) => {
                 self.handle_va_connection_provided(va_conn_id)
             }
@@ -141,10 +139,9 @@ impl CheckingActor {
     // Message Handling
     // =============================================================================
 
-    fn handle_network_message<S: DBBStorage, B: BulletinBoard>(
+    fn handle_network_message<B: BulletinBoard>(
         &mut self,
         message: ProtocolMsg,
-        storage: &S,
         bulletin_board: &B,
     ) -> Result<CheckingOutput, String> {
         match message {
@@ -152,7 +149,7 @@ impl CheckingActor {
                 self.handle_check_request(check_req, bulletin_board)
             }
             ProtocolMsg::Randomizer(randomizer) => {
-                self.handle_randomizer_message(randomizer, storage, bulletin_board)
+                self.handle_randomizer_message(randomizer, bulletin_board)
             }
             _ => Err(format!(
                 "Unexpected message type in checking actor: {:?}",
@@ -206,10 +203,9 @@ impl CheckingActor {
         })
     }
 
-    fn handle_randomizer_message<S: DBBStorage, B: BulletinBoard>(
+    fn handle_randomizer_message<B: BulletinBoard>(
         &mut self,
         randomizer: RandomizerMsg,
-        _storage: &S,
         bulletin_board: &B,
     ) -> Result<CheckingOutput, String> {
         if self.state != CheckingState::AwaitingRandomizers {
@@ -276,18 +272,26 @@ impl CheckingActor {
         // previously cast it or another ballot. This is stricter than the protocol's
         // required check of "has the voter cast the ballot they want to check", but
         // more straightforward to implement.
-        match bulletin {
-            BallotSubmission(bs) => {
-                let voter_pseudonym = bs.data.ballot.data.voter_pseudonym;
-                if bulletin_board
-                    .get_bulletins_by_pseudonym(voter_pseudonym)
-                    .iter()
-                    .any(|b| matches!(b, Bulletin::BallotCast(_)))
-                {
-                    return Err("Voter has already cast a ballot".to_string());
-                }
-            }
-            _ => return Err("Tracker does not refer to a ballot submission".to_string()),
+        let sub = bulletin
+            .data
+            .contents
+            .as_any()
+            .downcast_ref::<BallotSubContents>()
+            .ok_or_else(|| "Tracker does not refer to a ballot submission".to_string())?;
+
+        let voter_pseudonym = sub
+            .ballot
+            .data
+            .voter_authorization
+            .data
+            .voter_pseudonym
+            .clone();
+        if bulletin_board
+            .get_bulletins_by_pseudonym(voter_pseudonym)
+            .iter()
+            .any(|b| b.data.contents.type_name() == BALLOT_CAST_BULLETIN)
+        {
+            return Err("Voter has already cast a ballot".to_string());
         }
 
         Ok(())
@@ -366,22 +370,23 @@ impl CheckingActor {
             .get_bulletin(&randomizer_data.message.data.tracker)?
             .ok_or("Could not find ballot submission for tracker")?;
 
-        if let BallotSubmission(ballot_sub) = bulletin {
-            // Get the ballot style from the ballot
-            let ballot_style = ballot_sub.data.ballot.data.ballot_style;
+        let sub = bulletin
+            .data
+            .contents
+            .as_any()
+            .downcast_ref::<BallotSubContents>()
+            .ok_or_else(|| "Tracker does not refer to a ballot submission".to_string())?;
 
-            // Verify the ballot style matches between the submission and randomizers
-            if randomizer_data.encrypted_randomizers.ballot_style != ballot_style {
-                return Err(format!(
-                    "Randomizers ballot style {} does not match ballot submission style {}",
-                    randomizer_data.encrypted_randomizers.ballot_style, ballot_style
-                ));
-            }
-
-            Ok(())
-        } else {
-            Err("Tracker does not refer to a ballot submission".to_string())
+        // Verify the ballot style matches between the submission and randomizers
+        let ballot_style = sub.ballot.data.voter_authorization.data.ballot_style;
+        if randomizer_data.encrypted_randomizers.ballot_style != ballot_style {
+            return Err(format!(
+                "Randomizers ballot style {} does not match ballot submission style {}",
+                randomizer_data.encrypted_randomizers.ballot_style, ballot_style
+            ));
         }
+
+        Ok(())
     }
 
     /// Check #6: The public_key matches the ballot submission.
@@ -395,15 +400,20 @@ impl CheckingActor {
             .get_bulletin(&randomizer_data.message.data.tracker)?
             .ok_or("Could not find ballot submission for tracker")?;
 
-        if let BallotSubmission(ballot_sub) = bulletin {
-            // Verify the public key matches
-            if ballot_sub.data.ballot.data.voter_verifying_key != randomizer_data.public_key {
-                return Err("Randomizer public key does not match ballot submission".to_string());
-            }
-            Ok(())
-        } else {
-            Err("Tracker does not refer to a ballot submission".to_string())
+        let sub = bulletin
+            .data
+            .contents
+            .as_any()
+            .downcast_ref::<BallotSubContents>()
+            .ok_or_else(|| "Tracker does not refer to a ballot submission".to_string())?;
+
+        // Verify the public key matches
+        if sub.ballot.data.voter_authorization.data.voter_verifying_key
+            != randomizer_data.public_key
+        {
+            return Err("Randomizer public key does not match ballot submission".to_string());
         }
+        Ok(())
     }
 
     /// Check #1: The signature is valid.
@@ -466,22 +476,17 @@ impl CheckingActor {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::bulletins::{
-        BallotCastBulletin, BallotCastBulletinData, BallotSubBulletin, BallotSubBulletinData,
-        Bulletin,
-    };
+    use crate::bulletins::{BallotCastContents, BallotSubContents, Bulletin, BulletinData};
     use crate::cryptography::{
         BallotCryptogram, Signature, VerifyingKey, generate_encryption_keypair,
         generate_signature_keypair,
     };
-    use crate::elections::{BallotStyle, string_to_election_hash};
+    use crate::elections::{BallotStyle, VoterAuthorization, string_to_election_hash};
     use crate::messages::{
-        AuthVoterMsg, AuthVoterMsgData, CastReqMsg, CastReqMsgData, CheckReqMsgData,
-        RandomizerMsgData, SignedBallotMsg, SignedBallotMsgData,
+        CastReqMsg, CastReqMsgData, CheckReqMsgData, RandomizerMsgData, SignedBallotMsg,
+        SignedBallotMsgData,
     };
-    use crate::participants::digital_ballot_box::{
-        bulletin_board::InMemoryBulletinBoard, storage::InMemoryStorage,
-    };
+    use crate::participants::digital_ballot_box::bulletin_board::InMemoryBulletinBoard;
 
     // Helper to create a test ballot cryptogram
     fn create_test_ballot_cryptogram(ballot_style: BallotStyle) -> BallotCryptogram {
@@ -517,6 +522,29 @@ mod tests {
         }
     }
 
+    // Helper to create a signed ballot submission for a voter. The EAS
+    // signing key behind the voter authorization is freshly generated and
+    // discarded; checking.rs never verifies that signature.
+    fn make_signed_ballot(
+        election_hash: ElectionHash,
+        voter_pseudonym: &str,
+        voter_signing_key: &SigningKey,
+        voter_verifying_key: VerifyingKey,
+        ballot_style: BallotStyle,
+    ) -> SignedBallotMsg {
+        let data = SignedBallotMsgData {
+            voter_authorization: VoterAuthorization::test_voter_authorization(
+                election_hash,
+                voter_pseudonym,
+                ballot_style,
+                voter_verifying_key,
+            ),
+            ballot_cryptogram: create_test_ballot_cryptogram(ballot_style),
+        };
+        let signature = crate::cryptography::sign_data(&data.ser(), voter_signing_key);
+        SignedBallotMsg { data, signature }
+    }
+
     fn create_test_actor() -> (CheckingActor, SigningKey, VerifyingKey) {
         let (dbb_signing_key, dbb_verifying_key) = generate_signature_keypair();
         let election_hash = string_to_election_hash("test_election");
@@ -529,40 +557,36 @@ mod tests {
     #[test]
     fn test_successful_check_flow() {
         let (mut actor, dbb_signing_key, _dbb_verifying_key) = create_test_actor();
-        let storage = InMemoryStorage::new();
         let mut bulletin_board = InMemoryBulletinBoard::new();
         let election_hash = string_to_election_hash("test_election");
 
         // Create a ballot submission bulletin
         let (voter_signing_key, voter_verifying_key) = generate_signature_keypair();
-        let ballot_data = SignedBallotMsgData {
+        let ballot = make_signed_ballot(
             election_hash,
-            voter_pseudonym: "voter123".to_string(),
+            "voter123",
+            &voter_signing_key,
             voter_verifying_key,
-            ballot_style: 1,
-            ballot_cryptogram: create_test_ballot_cryptogram(1),
-        };
-        let ballot_signature_bytes =
-            crate::cryptography::sign_data(&ballot_data.ser(), &voter_signing_key);
-        let ballot = SignedBallotMsg {
-            data: ballot_data,
-            signature: Signature::from_bytes(&ballot_signature_bytes.to_bytes()),
-        };
+            1,
+        );
 
-        let ballot_sub_bulletin_data = BallotSubBulletinData {
+        let bulletin_data = BulletinData {
             election_hash,
+            contents: Box::new(BallotSubContents {
+                ballot: ballot.clone(),
+            }),
             timestamp: 1000,
-            ballot: ballot.clone(),
             previous_bb_msg_hash: bulletin_board.get_last_bulletin_hash().unwrap_or_default(),
         };
         let ballot_sub_signature_bytes =
-            crate::cryptography::sign_data(&ballot_sub_bulletin_data.ser(), &dbb_signing_key);
-        let ballot_sub_bulletin = BallotSubBulletin {
-            data: ballot_sub_bulletin_data,
-            signature: hex::encode(ballot_sub_signature_bytes.to_bytes()),
-        };
+            crate::cryptography::sign_data(&bulletin_data.ser(), &dbb_signing_key);
         let tracker = bulletin_board
-            .append_bulletin(Bulletin::BallotSubmission(ballot_sub_bulletin))
+            .append_bulletin_atomic(|_| {
+                Ok(Bulletin {
+                    data: bulletin_data.clone(),
+                    signature: hex::encode(ballot_sub_signature_bytes.to_bytes()),
+                })
+            })
             .unwrap();
 
         // Create a check request from BCA
@@ -588,7 +612,6 @@ mod tests {
                 connection_id: 1,
                 message: ProtocolMsg::CheckReq(check_req.clone()),
             },
-            &storage,
             &bulletin_board,
         );
 
@@ -601,11 +624,7 @@ mod tests {
         }
 
         // Provide VA connection
-        let result = actor.process_input(
-            CheckingInput::VAConnectionProvided(2),
-            &storage,
-            &bulletin_board,
-        );
+        let result = actor.process_input(CheckingInput::VAConnectionProvided(2), &bulletin_board);
 
         assert!(result.is_ok());
         match result.unwrap() {
@@ -638,7 +657,6 @@ mod tests {
                 connection_id: 2,
                 message: ProtocolMsg::Randomizer(randomizer),
             },
-            &storage,
             &bulletin_board,
         );
 
@@ -658,48 +676,43 @@ mod tests {
     #[test]
     fn test_check_after_cast() {
         let (mut actor, dbb_signing_key, _dbb_verifying_key) = create_test_actor();
-        let storage = InMemoryStorage::new();
         let mut bulletin_board = InMemoryBulletinBoard::new();
         let election_hash = string_to_election_hash("test_election");
-        let voter_pseudonym = "voter123".to_string();
+        let voter_pseudonym = "voter123";
 
         // Create a ballot submission bulletin
         let (voter_signing_key, voter_verifying_key) = generate_signature_keypair();
-        let ballot_data = SignedBallotMsgData {
+        let ballot = make_signed_ballot(
             election_hash,
-            voter_pseudonym: voter_pseudonym.clone(),
+            voter_pseudonym,
+            &voter_signing_key,
             voter_verifying_key,
-            ballot_style: 1,
-            ballot_cryptogram: create_test_ballot_cryptogram(1),
-        };
-        let ballot_signature_bytes =
-            crate::cryptography::sign_data(&ballot_data.ser(), &voter_signing_key);
-        let ballot = SignedBallotMsg {
-            data: ballot_data,
-            signature: Signature::from_bytes(&ballot_signature_bytes.to_bytes()),
-        };
+            1,
+        );
 
-        let ballot_sub_bulletin_data = BallotSubBulletinData {
+        let sub_bulletin_data = BulletinData {
             election_hash,
+            contents: Box::new(BallotSubContents {
+                ballot: ballot.clone(),
+            }),
             timestamp: 1000,
-            ballot: ballot.clone(),
             previous_bb_msg_hash: bulletin_board.get_last_bulletin_hash().unwrap_or_default(),
         };
         let ballot_sub_signature_bytes =
-            crate::cryptography::sign_data(&ballot_sub_bulletin_data.ser(), &dbb_signing_key);
-        let ballot_sub_bulletin = BallotSubBulletin {
-            data: ballot_sub_bulletin_data.clone(),
-            signature: hex::encode(ballot_sub_signature_bytes.to_bytes()),
-        };
+            crate::cryptography::sign_data(&sub_bulletin_data.ser(), &dbb_signing_key);
         let tracker = bulletin_board
-            .append_bulletin(Bulletin::BallotSubmission(ballot_sub_bulletin))
+            .append_bulletin_atomic(|_| {
+                Ok(Bulletin {
+                    data: sub_bulletin_data.clone(),
+                    signature: hex::encode(ballot_sub_signature_bytes.to_bytes()),
+                })
+            })
             .unwrap();
 
         // Create a ballot cast bulletin for the ballot we just submitted
         let cast_req_data = CastReqMsgData {
             election_hash,
-            voter_pseudonym,
-            voter_verifying_key,
+            voter_authorization: ballot.data.voter_authorization.clone(),
             ballot_tracker: tracker.clone(),
         };
         let cast_req_signature_bytes =
@@ -708,22 +721,24 @@ mod tests {
             data: cast_req_data,
             signature: Signature::from_bytes(&cast_req_signature_bytes.to_bytes()),
         };
-        let ballot_cast_bulletin_data = BallotCastBulletinData {
+        let cast_bulletin_data = BulletinData {
             election_hash,
+            contents: Box::new(BallotCastContents {
+                ballot: ballot.clone(),
+                cast_intent: cast_req_msg,
+            }),
             timestamp: 1001,
-            ballot: ballot_sub_bulletin_data.ballot,
-            cast_intent: cast_req_msg,
             previous_bb_msg_hash: bulletin_board.get_last_bulletin_hash().unwrap_or_default(),
         };
         let ballot_cast_signature_bytes =
-            crate::cryptography::sign_data(&ballot_cast_bulletin_data.ser(), &dbb_signing_key);
-        let ballot_cast_bulletin = BallotCastBulletin {
-            data: ballot_cast_bulletin_data,
-            signature: hex::encode(ballot_cast_signature_bytes.to_bytes()),
-        };
-
+            crate::cryptography::sign_data(&cast_bulletin_data.ser(), &dbb_signing_key);
         let _cast_tracker = bulletin_board
-            .append_bulletin(Bulletin::BallotCast(ballot_cast_bulletin))
+            .append_bulletin_atomic(|_| {
+                Ok(Bulletin {
+                    data: cast_bulletin_data.clone(),
+                    signature: hex::encode(ballot_cast_signature_bytes.to_bytes()),
+                })
+            })
             .unwrap();
 
         // Create a check request from BCA
@@ -749,7 +764,6 @@ mod tests {
                 connection_id: 1,
                 message: ProtocolMsg::CheckReq(check_req.clone()),
             },
-            &storage,
             &bulletin_board,
         );
 
@@ -765,7 +779,6 @@ mod tests {
     #[test]
     fn test_invalid_election_hash() {
         let (mut actor, _, _) = create_test_actor();
-        let storage = InMemoryStorage::new();
         let bulletin_board = InMemoryBulletinBoard::new();
         let wrong_election_hash = string_to_election_hash("wrong_election");
 
@@ -790,7 +803,6 @@ mod tests {
                 connection_id: 1,
                 message: ProtocolMsg::CheckReq(check_req),
             },
-            &storage,
             &bulletin_board,
         );
 
@@ -801,7 +813,6 @@ mod tests {
     #[test]
     fn test_invalid_tracker() {
         let (mut actor, _, _) = create_test_actor();
-        let storage = InMemoryStorage::new();
         let bulletin_board = InMemoryBulletinBoard::new();
         let election_hash = string_to_election_hash("test_election");
 
@@ -826,7 +837,6 @@ mod tests {
                 connection_id: 1,
                 message: ProtocolMsg::CheckReq(check_req),
             },
-            &storage,
             &bulletin_board,
         );
 
@@ -843,41 +853,37 @@ mod tests {
     #[test]
     fn test_check_req_invalid_signature_wrong_key() {
         let (mut actor, _, _) = create_test_actor();
-        let storage = InMemoryStorage::new();
         let mut bulletin_board = InMemoryBulletinBoard::new();
         let election_hash = string_to_election_hash("test_election");
 
         // Create a valid ballot submission first
         let (dbb_signing_key, _dbb_verifying_key) = generate_signature_keypair();
-        let (_voter_signing_key, voter_verifying_key) = generate_signature_keypair();
-        let ballot_data = SignedBallotMsgData {
+        let (voter_signing_key, voter_verifying_key) = generate_signature_keypair();
+        let ballot = make_signed_ballot(
             election_hash,
-            voter_pseudonym: "voter123".to_string(),
+            "voter123",
+            &voter_signing_key,
             voter_verifying_key,
-            ballot_style: 1,
-            ballot_cryptogram: create_test_ballot_cryptogram(1),
-        };
-        let ballot_signature_bytes =
-            crate::cryptography::sign_data(&ballot_data.ser(), &_voter_signing_key);
-        let ballot = SignedBallotMsg {
-            data: ballot_data,
-            signature: Signature::from_bytes(&ballot_signature_bytes.to_bytes()),
-        };
+            1,
+        );
 
-        let ballot_sub_bulletin_data = BallotSubBulletinData {
+        let bulletin_data = BulletinData {
             election_hash,
+            contents: Box::new(BallotSubContents {
+                ballot: ballot.clone(),
+            }),
             timestamp: 1000,
-            ballot: ballot.clone(),
             previous_bb_msg_hash: bulletin_board.get_last_bulletin_hash().unwrap_or_default(),
         };
         let ballot_sub_signature_bytes =
-            crate::cryptography::sign_data(&ballot_sub_bulletin_data.ser(), &dbb_signing_key);
-        let ballot_sub_bulletin = BallotSubBulletin {
-            data: ballot_sub_bulletin_data,
-            signature: hex::encode(ballot_sub_signature_bytes.to_bytes()),
-        };
+            crate::cryptography::sign_data(&bulletin_data.ser(), &dbb_signing_key);
         let tracker = bulletin_board
-            .append_bulletin(Bulletin::BallotSubmission(ballot_sub_bulletin))
+            .append_bulletin_atomic(|_| {
+                Ok(Bulletin {
+                    data: bulletin_data.clone(),
+                    signature: hex::encode(ballot_sub_signature_bytes.to_bytes()),
+                })
+            })
             .unwrap();
 
         // Create check request but sign with WRONG key
@@ -903,7 +909,6 @@ mod tests {
                 connection_id: 1,
                 message: ProtocolMsg::CheckReq(check_req),
             },
-            &storage,
             &bulletin_board,
         );
 
@@ -914,41 +919,37 @@ mod tests {
     #[test]
     fn test_check_req_invalid_signature_corrupted_bytes() {
         let (mut actor, _, _) = create_test_actor();
-        let storage = InMemoryStorage::new();
         let mut bulletin_board = InMemoryBulletinBoard::new();
         let election_hash = string_to_election_hash("test_election");
 
         // Create a valid ballot submission first
         let (dbb_signing_key, _dbb_verifying_key) = generate_signature_keypair();
-        let (_voter_signing_key, voter_verifying_key) = generate_signature_keypair();
-        let ballot_data = SignedBallotMsgData {
+        let (voter_signing_key, voter_verifying_key) = generate_signature_keypair();
+        let ballot = make_signed_ballot(
             election_hash,
-            voter_pseudonym: "voter123".to_string(),
+            "voter123",
+            &voter_signing_key,
             voter_verifying_key,
-            ballot_style: 1,
-            ballot_cryptogram: create_test_ballot_cryptogram(1),
-        };
-        let ballot_signature_bytes =
-            crate::cryptography::sign_data(&ballot_data.ser(), &_voter_signing_key);
-        let ballot = SignedBallotMsg {
-            data: ballot_data,
-            signature: Signature::from_bytes(&ballot_signature_bytes.to_bytes()),
-        };
+            1,
+        );
 
-        let ballot_sub_bulletin_data = BallotSubBulletinData {
+        let bulletin_data = BulletinData {
             election_hash,
+            contents: Box::new(BallotSubContents {
+                ballot: ballot.clone(),
+            }),
             timestamp: 1000,
-            ballot: ballot.clone(),
             previous_bb_msg_hash: bulletin_board.get_last_bulletin_hash().unwrap_or_default(),
         };
         let ballot_sub_signature_bytes =
-            crate::cryptography::sign_data(&ballot_sub_bulletin_data.ser(), &dbb_signing_key);
-        let ballot_sub_bulletin = BallotSubBulletin {
-            data: ballot_sub_bulletin_data,
-            signature: hex::encode(ballot_sub_signature_bytes.to_bytes()),
-        };
+            crate::cryptography::sign_data(&bulletin_data.ser(), &dbb_signing_key);
         let tracker = bulletin_board
-            .append_bulletin(Bulletin::BallotSubmission(ballot_sub_bulletin))
+            .append_bulletin_atomic(|_| {
+                Ok(Bulletin {
+                    data: bulletin_data.clone(),
+                    signature: hex::encode(ballot_sub_signature_bytes.to_bytes()),
+                })
+            })
             .unwrap();
 
         // Create check request with CORRUPTED signature
@@ -980,7 +981,6 @@ mod tests {
                 connection_id: 1,
                 message: ProtocolMsg::CheckReq(check_req),
             },
-            &storage,
             &bulletin_board,
         );
 
@@ -991,69 +991,37 @@ mod tests {
     #[test]
     fn test_randomizer_invalid_signature_wrong_key() {
         let (mut actor, _, _) = create_test_actor();
-        let mut storage = InMemoryStorage::new();
         let mut bulletin_board = InMemoryBulletinBoard::new();
         let election_hash = string_to_election_hash("test_election");
 
         // Set up complete flow first
         let (dbb_signing_key, _dbb_verifying_key) = generate_signature_keypair();
-        let (eas_signing_key, _eas_verifying_key) = generate_signature_keypair();
-        let (_voter_signing_key, voter_verifying_key) = generate_signature_keypair();
-
-        // Authorize voter
-        let auth_data = AuthVoterMsgData {
+        let (voter_signing_key, voter_verifying_key) = generate_signature_keypair();
+        let ballot = make_signed_ballot(
             election_hash,
-            voter_pseudonym: "voter123".to_string(),
+            "voter123",
+            &voter_signing_key,
             voter_verifying_key,
-            ballot_style: 1,
-        };
-        let auth_signature_bytes =
-            crate::cryptography::sign_data(&auth_data.ser(), &eas_signing_key);
-        let auth_msg = AuthVoterMsg {
-            data: auth_data,
-            signature: Signature::from_bytes(&auth_signature_bytes.to_bytes()),
-        };
-        storage
-            .store_voter_authorization(&"voter123".to_string(), auth_msg)
-            .unwrap();
+            1,
+        );
 
-        // Submit ballot
-        let ballot_data = SignedBallotMsgData {
+        let bulletin_data = BulletinData {
             election_hash,
-            voter_pseudonym: "voter123".to_string(),
-            voter_verifying_key,
-            ballot_style: 1,
-            ballot_cryptogram: create_test_ballot_cryptogram(1),
-        };
-        let ballot_signature_bytes =
-            crate::cryptography::sign_data(&ballot_data.ser(), &_voter_signing_key);
-        let ballot = SignedBallotMsg {
-            data: ballot_data,
-            signature: Signature::from_bytes(&ballot_signature_bytes.to_bytes()),
-        };
-
-        let ballot_sub_bulletin_data = BallotSubBulletinData {
-            election_hash,
+            contents: Box::new(BallotSubContents {
+                ballot: ballot.clone(),
+            }),
             timestamp: 1000,
-            ballot: ballot.clone(),
             previous_bb_msg_hash: bulletin_board.get_last_bulletin_hash().unwrap_or_default(),
         };
         let ballot_sub_signature_bytes =
-            crate::cryptography::sign_data(&ballot_sub_bulletin_data.ser(), &dbb_signing_key);
-        let ballot_sub_bulletin = BallotSubBulletin {
-            data: ballot_sub_bulletin_data,
-            signature: hex::encode(ballot_sub_signature_bytes.to_bytes()),
-        };
+            crate::cryptography::sign_data(&bulletin_data.ser(), &dbb_signing_key);
         let tracker = bulletin_board
-            .append_bulletin(Bulletin::BallotSubmission(ballot_sub_bulletin))
-            .unwrap();
-
-        // Cast ballot
-        storage
-            .store_submitted_ballot(&"voter123".to_string(), &tracker, ballot)
-            .unwrap();
-        storage
-            .store_cast_ballot(&"voter123".to_string(), &tracker)
+            .append_bulletin_atomic(|_| {
+                Ok(Bulletin {
+                    data: bulletin_data.clone(),
+                    signature: hex::encode(ballot_sub_signature_bytes.to_bytes()),
+                })
+            })
             .unwrap();
 
         // Send check request
@@ -1079,16 +1047,11 @@ mod tests {
                     connection_id: 1,
                     message: ProtocolMsg::CheckReq(check_req.clone()),
                 },
-                &storage,
                 &bulletin_board,
             )
             .unwrap();
         actor
-            .process_input(
-                CheckingInput::VAConnectionProvided(2),
-                &storage,
-                &bulletin_board,
-            )
+            .process_input(CheckingInput::VAConnectionProvided(2), &bulletin_board)
             .unwrap();
 
         // Create randomizer message with WRONG signing key
@@ -1111,7 +1074,6 @@ mod tests {
                 connection_id: 2,
                 message: ProtocolMsg::Randomizer(randomizer),
             },
-            &storage,
             &bulletin_board,
         );
 
@@ -1122,69 +1084,37 @@ mod tests {
     #[test]
     fn test_randomizer_invalid_signature_corrupted_bytes() {
         let (mut actor, _, _) = create_test_actor();
-        let mut storage = InMemoryStorage::new();
         let mut bulletin_board = InMemoryBulletinBoard::new();
         let election_hash = string_to_election_hash("test_election");
 
         // Set up complete flow first
         let (dbb_signing_key, _dbb_verifying_key) = generate_signature_keypair();
-        let (eas_signing_key, _eas_verifying_key) = generate_signature_keypair();
         let (voter_signing_key, voter_verifying_key) = generate_signature_keypair();
-
-        // Authorize voter
-        let auth_data = AuthVoterMsgData {
+        let ballot = make_signed_ballot(
             election_hash,
-            voter_pseudonym: "voter123".to_string(),
+            "voter123",
+            &voter_signing_key,
             voter_verifying_key,
-            ballot_style: 1,
-        };
-        let auth_signature_bytes =
-            crate::cryptography::sign_data(&auth_data.ser(), &eas_signing_key);
-        let auth_msg = AuthVoterMsg {
-            data: auth_data,
-            signature: Signature::from_bytes(&auth_signature_bytes.to_bytes()),
-        };
-        storage
-            .store_voter_authorization(&"voter123".to_string(), auth_msg)
-            .unwrap();
+            1,
+        );
 
-        // Submit ballot
-        let ballot_data = SignedBallotMsgData {
+        let bulletin_data = BulletinData {
             election_hash,
-            voter_pseudonym: "voter123".to_string(),
-            voter_verifying_key,
-            ballot_style: 1,
-            ballot_cryptogram: create_test_ballot_cryptogram(1),
-        };
-        let ballot_signature_bytes =
-            crate::cryptography::sign_data(&ballot_data.ser(), &voter_signing_key);
-        let ballot = SignedBallotMsg {
-            data: ballot_data,
-            signature: Signature::from_bytes(&ballot_signature_bytes.to_bytes()),
-        };
-
-        let ballot_sub_bulletin_data = BallotSubBulletinData {
-            election_hash,
+            contents: Box::new(BallotSubContents {
+                ballot: ballot.clone(),
+            }),
             timestamp: 1000,
-            ballot: ballot.clone(),
             previous_bb_msg_hash: bulletin_board.get_last_bulletin_hash().unwrap_or_default(),
         };
         let ballot_sub_signature_bytes =
-            crate::cryptography::sign_data(&ballot_sub_bulletin_data.ser(), &dbb_signing_key);
-        let ballot_sub_bulletin = BallotSubBulletin {
-            data: ballot_sub_bulletin_data,
-            signature: hex::encode(ballot_sub_signature_bytes.to_bytes()),
-        };
+            crate::cryptography::sign_data(&bulletin_data.ser(), &dbb_signing_key);
         let tracker = bulletin_board
-            .append_bulletin(Bulletin::BallotSubmission(ballot_sub_bulletin))
-            .unwrap();
-
-        // Cast ballot
-        storage
-            .store_submitted_ballot(&"voter123".to_string(), &tracker, ballot)
-            .unwrap();
-        storage
-            .store_cast_ballot(&"voter123".to_string(), &tracker)
+            .append_bulletin_atomic(|_| {
+                Ok(Bulletin {
+                    data: bulletin_data.clone(),
+                    signature: hex::encode(ballot_sub_signature_bytes.to_bytes()),
+                })
+            })
             .unwrap();
 
         // Send check request
@@ -1210,16 +1140,11 @@ mod tests {
                     connection_id: 1,
                     message: ProtocolMsg::CheckReq(check_req.clone()),
                 },
-                &storage,
                 &bulletin_board,
             )
             .unwrap();
         actor
-            .process_input(
-                CheckingInput::VAConnectionProvided(2),
-                &storage,
-                &bulletin_board,
-            )
+            .process_input(CheckingInput::VAConnectionProvided(2), &bulletin_board)
             .unwrap();
 
         // Create randomizer message with CORRUPTED signature
@@ -1248,7 +1173,6 @@ mod tests {
                 connection_id: 2,
                 message: ProtocolMsg::Randomizer(randomizer),
             },
-            &storage,
             &bulletin_board,
         );
 
@@ -1259,41 +1183,37 @@ mod tests {
     #[test]
     fn test_check_req_invalid_signature_all_zeros() {
         let (mut actor, _, _) = create_test_actor();
-        let storage = InMemoryStorage::new();
         let mut bulletin_board = InMemoryBulletinBoard::new();
         let election_hash = string_to_election_hash("test_election");
 
         // Create a valid ballot submission first
         let (dbb_signing_key, _dbb_verifying_key) = generate_signature_keypair();
-        let (_voter_signing_key, voter_verifying_key) = generate_signature_keypair();
-        let ballot_data = SignedBallotMsgData {
+        let (voter_signing_key, voter_verifying_key) = generate_signature_keypair();
+        let ballot = make_signed_ballot(
             election_hash,
-            voter_pseudonym: "voter123".to_string(),
+            "voter123",
+            &voter_signing_key,
             voter_verifying_key,
-            ballot_style: 1,
-            ballot_cryptogram: create_test_ballot_cryptogram(1),
-        };
-        let ballot_signature_bytes =
-            crate::cryptography::sign_data(&ballot_data.ser(), &_voter_signing_key);
-        let ballot = SignedBallotMsg {
-            data: ballot_data,
-            signature: Signature::from_bytes(&ballot_signature_bytes.to_bytes()),
-        };
+            1,
+        );
 
-        let ballot_sub_bulletin_data = BallotSubBulletinData {
+        let bulletin_data = BulletinData {
             election_hash,
+            contents: Box::new(BallotSubContents {
+                ballot: ballot.clone(),
+            }),
             timestamp: 1000,
-            ballot: ballot.clone(),
             previous_bb_msg_hash: bulletin_board.get_last_bulletin_hash().unwrap_or_default(),
         };
         let ballot_sub_signature_bytes =
-            crate::cryptography::sign_data(&ballot_sub_bulletin_data.ser(), &dbb_signing_key);
-        let ballot_sub_bulletin = BallotSubBulletin {
-            data: ballot_sub_bulletin_data,
-            signature: hex::encode(ballot_sub_signature_bytes.to_bytes()),
-        };
+            crate::cryptography::sign_data(&bulletin_data.ser(), &dbb_signing_key);
         let tracker = bulletin_board
-            .append_bulletin(Bulletin::BallotSubmission(ballot_sub_bulletin))
+            .append_bulletin_atomic(|_| {
+                Ok(Bulletin {
+                    data: bulletin_data.clone(),
+                    signature: hex::encode(ballot_sub_signature_bytes.to_bytes()),
+                })
+            })
             .unwrap();
 
         // Create check request with all-zeros signature
@@ -1316,7 +1236,6 @@ mod tests {
                 connection_id: 1,
                 message: ProtocolMsg::CheckReq(check_req),
             },
-            &storage,
             &bulletin_board,
         );
 
@@ -1327,69 +1246,37 @@ mod tests {
     #[test]
     fn test_randomizer_invalid_signature_all_ones() {
         let (mut actor, _, _) = create_test_actor();
-        let mut storage = InMemoryStorage::new();
         let mut bulletin_board = InMemoryBulletinBoard::new();
         let election_hash = string_to_election_hash("test_election");
 
         // Set up complete flow first
         let (dbb_signing_key, _dbb_verifying_key) = generate_signature_keypair();
-        let (eas_signing_key, _eas_verifying_key) = generate_signature_keypair();
-        let (_voter_signing_key, voter_verifying_key) = generate_signature_keypair();
-
-        // Authorize voter
-        let auth_data = AuthVoterMsgData {
+        let (voter_signing_key, voter_verifying_key) = generate_signature_keypair();
+        let ballot = make_signed_ballot(
             election_hash,
-            voter_pseudonym: "voter123".to_string(),
+            "voter123",
+            &voter_signing_key,
             voter_verifying_key,
-            ballot_style: 1,
-        };
-        let auth_signature_bytes =
-            crate::cryptography::sign_data(&auth_data.ser(), &eas_signing_key);
-        let auth_msg = AuthVoterMsg {
-            data: auth_data,
-            signature: Signature::from_bytes(&auth_signature_bytes.to_bytes()),
-        };
-        storage
-            .store_voter_authorization(&"voter123".to_string(), auth_msg)
-            .unwrap();
+            1,
+        );
 
-        // Submit ballot
-        let ballot_data = SignedBallotMsgData {
+        let bulletin_data = BulletinData {
             election_hash,
-            voter_pseudonym: "voter123".to_string(),
-            voter_verifying_key,
-            ballot_style: 1,
-            ballot_cryptogram: create_test_ballot_cryptogram(1),
-        };
-        let ballot_signature_bytes =
-            crate::cryptography::sign_data(&ballot_data.ser(), &_voter_signing_key);
-        let ballot = SignedBallotMsg {
-            data: ballot_data,
-            signature: Signature::from_bytes(&ballot_signature_bytes.to_bytes()),
-        };
-
-        let ballot_sub_bulletin_data = BallotSubBulletinData {
-            election_hash,
+            contents: Box::new(BallotSubContents {
+                ballot: ballot.clone(),
+            }),
             timestamp: 1000,
-            ballot: ballot.clone(),
             previous_bb_msg_hash: bulletin_board.get_last_bulletin_hash().unwrap_or_default(),
         };
         let ballot_sub_signature_bytes =
-            crate::cryptography::sign_data(&ballot_sub_bulletin_data.ser(), &dbb_signing_key);
-        let ballot_sub_bulletin = BallotSubBulletin {
-            data: ballot_sub_bulletin_data,
-            signature: hex::encode(ballot_sub_signature_bytes.to_bytes()),
-        };
+            crate::cryptography::sign_data(&bulletin_data.ser(), &dbb_signing_key);
         let tracker = bulletin_board
-            .append_bulletin(Bulletin::BallotSubmission(ballot_sub_bulletin))
-            .unwrap();
-
-        // Cast ballot
-        storage
-            .store_submitted_ballot(&"voter123".to_string(), &tracker, ballot)
-            .unwrap();
-        storage
-            .store_cast_ballot(&"voter123".to_string(), &tracker)
+            .append_bulletin_atomic(|_| {
+                Ok(Bulletin {
+                    data: bulletin_data.clone(),
+                    signature: hex::encode(ballot_sub_signature_bytes.to_bytes()),
+                })
+            })
             .unwrap();
 
         // Send check request
@@ -1415,16 +1302,11 @@ mod tests {
                     connection_id: 1,
                     message: ProtocolMsg::CheckReq(check_req.clone()),
                 },
-                &storage,
                 &bulletin_board,
             )
             .unwrap();
         actor
-            .process_input(
-                CheckingInput::VAConnectionProvided(2),
-                &storage,
-                &bulletin_board,
-            )
+            .process_input(CheckingInput::VAConnectionProvided(2), &bulletin_board)
             .unwrap();
 
         // Create randomizer message with all-ones signature
@@ -1444,7 +1326,6 @@ mod tests {
                 connection_id: 2,
                 message: ProtocolMsg::Randomizer(randomizer),
             },
-            &storage,
             &bulletin_board,
         );
 

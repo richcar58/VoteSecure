@@ -29,6 +29,15 @@ jobs:
             matrix: true
             files: |
              **.cfr
+            # The Needham-Schroeder PLE model is modular: ple.cfr is a
+            # concretization that depends on the abstract clafers in the
+            # vendored prelude (ple/*.cfr).  None of these fragments
+            # typecheck on their own, so they are excluded here and
+            # validated as an assembled model by `make ci` in
+            # test-validity-of-needham-schroeder.yml.
+            files_ignore: |
+             examples/needham-schroeder/ple.cfr
+             examples/needham-schroeder/ple/**
 
   test:
     name: Check Clafer Syntax

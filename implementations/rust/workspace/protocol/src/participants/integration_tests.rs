@@ -24,12 +24,13 @@ mod tests {
     use crate::auth_service::{
         AuthServiceMsg, AuthServiceQueryMsg, AuthServiceReportMsg, InitAuthReqMsg, TokenReturnMsg,
     };
-    use crate::bulletins::Bulletin;
+    use crate::bulletins::{BALLOT_CAST_BULLETIN, BALLOT_SUBMISSION_BULLETIN, BallotSubContents};
     use crate::cryptography::{
         Context, CryptographyContext, ElectionKey, SigningKey, VerifyingKey,
     };
     use crate::elections::{
-        Ballot, BallotStyle, CastOrNot, ElectionHash, VoterPseudonym, string_to_election_hash,
+        Ballot, BallotStyle, CastOrNot, ElectionHash, VoterAuthorizationTimestamp, VoterPseudonym,
+        string_to_election_hash,
     };
     use crate::messages::ProtocolMsg;
     use crate::participants::ballot_check_application::sub_actors::ballot_check::{
@@ -41,8 +42,7 @@ mod tests {
     };
     use crate::participants::digital_ballot_box::{
         ActorInput as DBBInput, ActorOutput as DBBOutput, BulletinBoard, Command as DBBCommand,
-        DBBIncomingMessage, DigitalBallotBoxActor, EASMessage, InMemoryBulletinBoard,
-        InMemoryStorage,
+        DBBIncomingMessage, DigitalBallotBoxActor, InMemoryBulletinBoard,
     };
     use crate::participants::election_admin_server::sub_actors::voter_authentication::{
         VoterAuthenticationInput, VoterAuthenticationOutput,
@@ -422,7 +422,7 @@ mod tests {
         eas: EASActor,
 
         // Real DBB
-        dbb: DigitalBallotBoxActor<InMemoryStorage, InMemoryBulletinBoard>,
+        dbb: DigitalBallotBoxActor<InMemoryBulletinBoard>,
 
         // Connection routing infrastructure for DBB
         next_connection_id: u64,
@@ -462,6 +462,23 @@ mod tests {
         next_actor_id: u64,
     }
 
+    /// Derive the set of voter pseudonyms with a cast ballot directly from
+    /// the bulletin board; the DBB holds no storage of its own.
+    fn voters_who_cast<B: BulletinBoard>(bulletin_board: &B) -> BTreeSet<VoterPseudonym> {
+        bulletin_board
+            .get_bulletins_by_type(BALLOT_CAST_BULLETIN)
+            .iter()
+            .filter_map(|b| b.data.contents.voter_pseudonym())
+            .collect()
+    }
+
+    /// Count submitted ballots directly from the bulletin board.
+    fn count_submitted_ballots<B: BulletinBoard>(bulletin_board: &B) -> usize {
+        bulletin_board
+            .get_bulletins_by_type(BALLOT_SUBMISSION_BULLETIN)
+            .len()
+    }
+
     /// Implement Hash for IntegrationState.
     impl Hash for IntegrationState {
         fn hash<H: Hasher>(&self, state: &mut H) {
@@ -490,22 +507,10 @@ mod tests {
             // to distinguish states, not cryptographic/timing details
             let bulletins = self.dbb.bulletin_board().get_all_bulletins();
             bulletins.len().hash(state);
-            for bulletin in bulletins {
-                std::mem::discriminant(&bulletin).hash(state);
-                match bulletin {
-                    Bulletin::BallotSubmission(sub) => {
-                        sub.data.ballot.data.voter_pseudonym.hash(state);
-                        sub.data.ballot.data.ballot_style.hash(state);
-                    }
-                    Bulletin::VoterAuthorization(auth) => {
-                        auth.data.authorization.data.voter_pseudonym.hash(state);
-                        auth.data.authorization.data.ballot_style.hash(state);
-                    }
-                    Bulletin::BallotCast(cast) => {
-                        cast.data.ballot.data.voter_pseudonym.hash(state);
-                        cast.data.ballot.data.ballot_style.hash(state);
-                    }
-                }
+            for bulletin in &bulletins {
+                bulletin.data.contents.type_name().hash(state);
+                bulletin.data.contents.voter_pseudonym().hash(state);
+                bulletin.data.contents.ballot_style().hash(state);
             }
 
             // Hash AS state (session counter and active sessions)
@@ -518,24 +523,19 @@ mod tests {
                 profile.hash(state);
             }
 
-            // Hash DBB state (simplified - just counts and sets)
-            self.dbb
-                .storage()
-                .test_count_authorized_voters()
-                .hash(state);
-            self.dbb
-                .storage()
-                .test_count_submitted_ballots()
-                .hash(state);
-            self.dbb.storage().test_voters_who_cast().hash(state);
+            // Hash DBB state (simplified - just counts and sets), derived
+            // entirely from the bulletin board since the DBB holds no
+            // storage of its own.
+            count_submitted_ballots(self.dbb.bulletin_board()).hash(state);
+            voters_who_cast(self.dbb.bulletin_board()).hash(state);
 
             // Hash voter session states
             // Iterate over BTreeMap values in sorted order by SessionId
             for session in self.voter_sessions.values() {
                 session.profile.hash(state);
                 session.assigned_voter_id.hash(state);
-                // Hash whether VA has completed authentication (via voter_pseudonym)
-                session.va.voter_pseudonym().is_some().hash(state);
+                // Hash whether VA has completed authentication (via voter_authorization)
+                session.va.voter_authorization().is_some().hash(state);
                 // Hash whether tracker exists, not its value (tracker is cryptographically-derived and varies)
                 session.va.ballot_tracker().is_some().hash(state);
                 session.check_count.hash(state);
@@ -657,7 +657,7 @@ mod tests {
                 && self.as_server.next_session_id == other.as_server.next_session_id
                 && self.as_server.sessions.len() == other.as_server.sessions.len()
                 && self.as_server.sessions == other.as_server.sessions
-                && self.dbb.storage().test_voters_who_cast() == other.dbb.storage().test_voters_who_cast()
+                && voters_who_cast(self.dbb.bulletin_board()) == voters_who_cast(other.dbb.bulletin_board())
                 && self.dbb.bulletin_board().get_all_bulletins().len() == other.dbb.bulletin_board().get_all_bulletins().len()
                 && self.bulletins_eq(&other)
                 && self.voter_sessions.len() == other.voter_sessions.len()
@@ -668,8 +668,8 @@ mod tests {
                         other.voter_sessions.get(session_id).is_some_and(|b| {
                         a.profile == b.profile
                             && a.assigned_voter_id == b.assigned_voter_id
-                            // Compare VA authentication state via voter_pseudonym
-                            && a.va.voter_pseudonym().is_some() == b.va.voter_pseudonym().is_some()
+                            // Compare VA authentication state via voter_authorization
+                            && a.va.voter_authorization().is_some() == b.va.voter_authorization().is_some()
                             // Compare whether tracker exists, not its value (tracker is cryptographically-derived)
                             && a.va.ballot_tracker().is_some() == b.va.ballot_tracker().is_some()
                             && a.has_cast == b.has_cast
@@ -814,35 +814,13 @@ mod tests {
                 .zip(other_bulletins.iter())
                 .all(|(a, b)| {
                     // First check if bulletin types match
-                    if std::mem::discriminant(a) != std::mem::discriminant(b) {
+                    if a.data.contents.type_name() != b.data.contents.type_name() {
                         return false;
                     }
 
-                    // Then compare semantically relevant fields
-                    match (a, b) {
-                        (Bulletin::BallotSubmission(a_sub), Bulletin::BallotSubmission(b_sub)) => {
-                            a_sub.data.ballot.data.voter_pseudonym
-                                == b_sub.data.ballot.data.voter_pseudonym
-                                && a_sub.data.ballot.data.ballot_style
-                                    == b_sub.data.ballot.data.ballot_style
-                        }
-                        (
-                            Bulletin::VoterAuthorization(a_auth),
-                            Bulletin::VoterAuthorization(b_auth),
-                        ) => {
-                            a_auth.data.authorization.data.voter_pseudonym
-                                == b_auth.data.authorization.data.voter_pseudonym
-                                && a_auth.data.authorization.data.ballot_style
-                                    == b_auth.data.authorization.data.ballot_style
-                        }
-                        (Bulletin::BallotCast(a_cast), Bulletin::BallotCast(b_cast)) => {
-                            a_cast.data.ballot.data.voter_pseudonym
-                                == b_cast.data.ballot.data.voter_pseudonym
-                                && a_cast.data.ballot.data.ballot_style
-                                    == b_cast.data.ballot.data.ballot_style
-                        }
-                        _ => false, // Different types (shouldn't happen due to discriminant check above)
-                    }
+                    // Compare semantically relevant fields via trait methods
+                    a.data.contents.voter_pseudonym() == b.data.contents.voter_pseudonym()
+                        && a.data.contents.ballot_style() == b.data.contents.ballot_style()
                 })
         }
 
@@ -867,11 +845,9 @@ mod tests {
             // Start with no voter sessions - they will be created on-demand
             let voter_sessions = BTreeMap::new();
 
-            // Create real DBB with in-memory storage and bulletin board
-            let storage = InMemoryStorage::new();
+            // Create real DBB with an in-memory bulletin board
             let bulletin_board = InMemoryBulletinBoard::new();
             let dbb = DigitalBallotBoxActor::new(
-                storage,
                 bulletin_board.clone(),
                 election_hash,
                 dbb_signing_key.clone(),
@@ -891,6 +867,9 @@ mod tests {
                     std::time::Duration::MAX, // Use maximum duration for model checking to avoid non-deterministic timeouts
                     "test_project_id".to_string(),
                     "test_api_key".to_string(),
+                    // Backdated so the DBB's "timestamp is in the past" check
+                    // doesn't depend on wall-clock time during model checking.
+                    VoterAuthorizationTimestamp::Fixed(0),
                 ),
                 dbb,
                 next_connection_id: 1000,
@@ -1248,6 +1227,16 @@ mod tests {
                                     .unwrap()
                                     .unauthorized_submission_failure = true;
                                 state.unauthorized_submission_failures += 1;
+                            } else if err.contains("already cast")
+                                || err.contains("Voter has already cast")
+                            {
+                                // This is an "already voted" failure
+                                state
+                                    .voter_sessions
+                                    .get_mut(&session_id)
+                                    .unwrap()
+                                    .already_voted_failure = true;
+                                state.already_voted_failures += 1;
                             } else {
                                 state
                                     .voter_sessions
@@ -1446,17 +1435,15 @@ mod tests {
                                 .to_as_service
                                 .push((auth_req_id, as_msg));
                         }
-                        VoterAuthenticationOutput::NetworkMessage(msgs) => {
-                            // Deliver network messages to VA
+                        VoterAuthenticationOutput::NetworkMessage(msg) => {
+                            // Deliver the network message to VA
                             // Skip if session was abandoned/removed
                             if let Some(session) = state.voter_sessions.get_mut(&session_id) {
-                                for msg in msgs {
-                                    session.va_inbox.push(VAMessage::SubprotocolInput(
-                                        VASubprotocolInput::Authentication(
-                                            AuthenticationInput::NetworkMessage(msg),
-                                        ),
-                                    ));
-                                }
+                                session.va_inbox.push(VAMessage::SubprotocolInput(
+                                    VASubprotocolInput::Authentication(
+                                        AuthenticationInput::NetworkMessage(msg),
+                                    ),
+                                ));
                             }
                         }
                         VoterAuthenticationOutput::Failure(_) => {
@@ -1533,17 +1520,15 @@ mod tests {
                             .to_as_service
                             .push((auth_req_id, as_msg));
                     }
-                    VoterAuthenticationOutput::NetworkMessage(msgs) => {
-                        // Deliver network messages to VA
+                    VoterAuthenticationOutput::NetworkMessage(msg) => {
+                        // Deliver the network message to VA
                         // Skip if session was abandoned/removed
                         if let Some(session) = state.voter_sessions.get_mut(&session_id) {
-                            for msg in msgs {
-                                session.va_inbox.push(VAMessage::SubprotocolInput(
-                                    VASubprotocolInput::Authentication(
-                                        AuthenticationInput::NetworkMessage(msg),
-                                    ),
-                                ));
-                            }
+                            session.va_inbox.push(VAMessage::SubprotocolInput(
+                                VASubprotocolInput::Authentication(
+                                    AuthenticationInput::NetworkMessage(msg),
+                                ),
+                            ));
                         }
                     }
                     VoterAuthenticationOutput::Failure(_) => {
@@ -1615,17 +1600,15 @@ mod tests {
             // Handle EAS output
             match eas_output {
                 EASSubprotocolOutput::VoterAuthentication(va_output, _) => match va_output {
-                    VoterAuthenticationOutput::NetworkMessage(msgs) => {
-                        // Deliver network messages to VA
+                    VoterAuthenticationOutput::NetworkMessage(msg) => {
+                        // Deliver the network message to VA
                         // Skip if session was abandoned/removed
                         if let Some(session) = state.voter_sessions.get_mut(&session_id) {
-                            for msg in msgs {
-                                session.va_inbox.push(VAMessage::SubprotocolInput(
-                                    VASubprotocolInput::Authentication(
-                                        AuthenticationInput::NetworkMessage(msg),
-                                    ),
-                                ));
-                            }
+                            session.va_inbox.push(VAMessage::SubprotocolInput(
+                                VASubprotocolInput::Authentication(
+                                    AuthenticationInput::NetworkMessage(msg),
+                                ),
+                            ));
                         }
                     }
                     VoterAuthenticationOutput::CheckBiographicalInfo(report) => {
@@ -1709,17 +1692,15 @@ mod tests {
             // Handle EAS output
             match eas_output {
                 EASSubprotocolOutput::VoterAuthentication(va_output, _) => match va_output {
-                    VoterAuthenticationOutput::NetworkMessage(msgs) => {
-                        // Deliver network messages to VA
+                    VoterAuthenticationOutput::NetworkMessage(msg) => {
+                        // Deliver the network message to VA
                         // Skip if session was abandoned/removed
                         if let Some(session) = state.voter_sessions.get_mut(&session_id) {
-                            for msg in msgs {
-                                session.va_inbox.push(VAMessage::SubprotocolInput(
-                                    VASubprotocolInput::Authentication(
-                                        AuthenticationInput::NetworkMessage(msg),
-                                    ),
-                                ));
-                            }
+                            session.va_inbox.push(VAMessage::SubprotocolInput(
+                                VASubprotocolInput::Authentication(
+                                    AuthenticationInput::NetworkMessage(msg),
+                                ),
+                            ));
                         }
                     }
                     VoterAuthenticationOutput::Failure(_) => {
@@ -1785,34 +1766,19 @@ mod tests {
             );
             let eas_output = state.eas.process_input(eas_input).ok()?;
 
-            // Handle EAS output - should send ConfirmAuthorization to VA and AuthVoter to DBB
+            // Handle EAS output - should send ConfirmAuthorization to VA
             match eas_output {
                 EASSubprotocolOutput::VoterAuthentication(va_output, _) => match va_output {
-                    VoterAuthenticationOutput::NetworkMessage(msgs) => {
-                        // Deliver messages to VA and DBB
+                    VoterAuthenticationOutput::NetworkMessage(msg) => {
+                        // Deliver the message to VA
                         // Skip if session was abandoned/removed
                         if let Some(session) = state.voter_sessions.get_mut(&session_id) {
-                            for msg in msgs {
-                                match &msg {
-                                    ProtocolMsg::ConfirmAuthorization(_) => {
-                                        // Send to VA
-                                        session.va_inbox.push(VAMessage::SubprotocolInput(
-                                            VASubprotocolInput::Authentication(
-                                                AuthenticationInput::NetworkMessage(msg),
-                                            ),
-                                        ));
-                                    }
-                                    ProtocolMsg::AuthVoter(auth_voter_msg) => {
-                                        // Send to DBB using EASMessage
-                                        state
-                                            .dbb
-                                            .process_input(DBBInput::EASMessage(EASMessage {
-                                                message: auth_voter_msg.clone(),
-                                            }))
-                                            .ok()?;
-                                    }
-                                    _ => {}
-                                }
+                            if let ProtocolMsg::ConfirmAuthorization(_) = &msg {
+                                session.va_inbox.push(VAMessage::SubprotocolInput(
+                                    VASubprotocolInput::Authentication(
+                                        AuthenticationInput::NetworkMessage(msg),
+                                    ),
+                                ));
                             }
                             // Mark voter as assigned
                             session.assigned_voter_id = Some(registered_id);
@@ -1874,19 +1840,17 @@ mod tests {
             // Handle EAS output - should send ConfirmAuthorization with failure to VA
             match eas_output {
                 EASSubprotocolOutput::VoterAuthentication(va_output, _) => match va_output {
-                    VoterAuthenticationOutput::NetworkMessage(msgs) => {
-                        // Deliver messages to VA
+                    VoterAuthenticationOutput::NetworkMessage(msg) => {
+                        // Deliver the message to VA
                         // Skip if session was abandoned/removed
-                        if let Some(session) = state.voter_sessions.get_mut(&session_id) {
-                            for msg in msgs {
-                                if let ProtocolMsg::ConfirmAuthorization(_) = &msg {
-                                    session.va_inbox.push(VAMessage::SubprotocolInput(
-                                        VASubprotocolInput::Authentication(
-                                            AuthenticationInput::NetworkMessage(msg),
-                                        ),
-                                    ));
-                                }
-                            }
+                        if let Some(session) = state.voter_sessions.get_mut(&session_id)
+                            && let ProtocolMsg::ConfirmAuthorization(_) = &msg
+                        {
+                            session.va_inbox.push(VAMessage::SubprotocolInput(
+                                VASubprotocolInput::Authentication(
+                                    AuthenticationInput::NetworkMessage(msg),
+                                ),
+                            ));
                         }
                     }
                     VoterAuthenticationOutput::Failure(_) => {
@@ -2336,11 +2300,7 @@ mod tests {
             // and isn't in the exclusion set
             for session_id in 0..state.config.num_registered_voters {
                 let pseudonym = format!("voter_{}", session_id);
-                if !state
-                    .dbb
-                    .storage()
-                    .test_voters_who_cast()
-                    .contains(&pseudonym)
+                if !voters_who_cast(state.dbb.bulletin_board()).contains(&pseudonym)
                     && !assigned_ids.contains(&session_id)
                     && !exclude.contains(&session_id)
                 {
@@ -2369,7 +2329,7 @@ mod tests {
         /// Find the first voter ID that has already cast a ballot.
         fn find_first_voted_voter_id(state: &IntegrationState) -> Option<usize> {
             // Extract voter ID from first pseudonym in voters_who_cast (BTreeSet already sorted)
-            if let Some(pseudonym) = state.dbb.storage().test_voters_who_cast().iter().next() {
+            if let Some(pseudonym) = voters_who_cast(state.dbb.bulletin_board()).iter().next() {
                 // Pseudonym format is "voter_{id}"
                 if let Some(id_str) = pseudonym.strip_prefix("voter_")
                     && let Ok(voter_id) = id_str.parse::<usize>()
@@ -2634,7 +2594,9 @@ mod tests {
                 }
 
                 // Submit ballot (if VA authentication complete and no tracker yet)
-                if session.va.voter_pseudonym().is_some() && session.va.ballot_tracker().is_none() {
+                if session.va.voter_authorization().is_some()
+                    && session.va.ballot_tracker().is_none()
+                {
                     actions.push(Action::UserSubmitBallot(session_id));
                 }
 
@@ -2850,11 +2812,12 @@ mod tests {
                         .get_bulletin(&tracker)
                         .ok()
                         .flatten()?;
-                    let ballot = if let Bulletin::BallotSubmission(sub) = bulletin {
-                        sub.data.ballot.clone()
-                    } else {
-                        return None;
-                    };
+                    let ballot = bulletin
+                        .data
+                        .contents
+                        .as_any()
+                        .downcast_ref::<BallotSubContents>()
+                        .map(|sub| sub.ballot.clone())?;
 
                     // Create BCA actor with the ballot to check
                     let bca = BCAActor::new(
@@ -2896,7 +2859,13 @@ mod tests {
                 Action::UserConfirmNotCast(session_id) => {
                     // Voter decides not to cast this ballot (will resubmit)
                     let session = next.voter_sessions.get(&session_id).unwrap();
-                    let voter_pseudonym = session.va.voter_pseudonym().unwrap().clone();
+                    let voter_pseudonym = session
+                        .va
+                        .voter_authorization()
+                        .unwrap()
+                        .data
+                        .voter_pseudonym
+                        .clone();
 
                     // Get bulletins for this voter from the DBB bulletin board
                     let voter_bulletins = next
@@ -2919,7 +2888,13 @@ mod tests {
                 Action::UserConfirmCast(session_id) => {
                     // Voter confirms they cast the ballot (after casting)
                     let session = next.voter_sessions.get(&session_id).unwrap();
-                    let voter_pseudonym = session.va.voter_pseudonym().unwrap().clone();
+                    let voter_pseudonym = session
+                        .va
+                        .voter_authorization()
+                        .unwrap()
+                        .data
+                        .voter_pseudonym
+                        .clone();
 
                     // Get bulletins for this voter from the DBB bulletin board
                     let voter_bulletins = next
@@ -3146,13 +3121,14 @@ mod tests {
         let mut cast_pseudonyms = BTreeSet::new();
 
         for bulletin in state.dbb.bulletin_board().get_all_bulletins() {
-            if let Bulletin::BallotCast(cast_bulletin) = bulletin {
-                let pseudonym = &cast_bulletin.data.ballot.data.voter_pseudonym;
-                if cast_pseudonyms.contains(pseudonym) {
-                    // Found a duplicate cast!
-                    return false;
+            if let Some(pseudonym) = bulletin.data.contents.voter_pseudonym() {
+                if bulletin.data.contents.type_name() == BALLOT_CAST_BULLETIN {
+                    if cast_pseudonyms.contains(&pseudonym) {
+                        // Found a duplicate cast!
+                        return false;
+                    }
+                    cast_pseudonyms.insert(pseudonym);
                 }
-                cast_pseudonyms.insert(pseudonym.clone());
             }
         }
 
@@ -3169,36 +3145,20 @@ mod tests {
     }
 
     fn all_cast_ballots_on_bulletin_board(state: &IntegrationState) -> bool {
-        // Count cast ballots on bulletin board
-        let bb_cast_count = state
-            .dbb
-            .bulletin_board()
-            .get_all_bulletins()
-            .iter()
-            .filter(|b| matches!(b, Bulletin::BallotCast(_)))
-            .count();
-
-        // Check that internal counter matches bulletin board
-        if state.dbb.storage().test_voters_who_cast().len() != bb_cast_count {
-            return false;
-        }
-
-        // Check that every pseudonym in voters_who_cast appears on the BB
-        for pseudonym in &state.dbb.storage().test_voters_who_cast() {
-            let found = state
-                .dbb
-                .bulletin_board()
-                .get_all_bulletins()
-                .iter()
-                .any(|b| {
-                    if let Bulletin::BallotCast(cast) = b {
-                        &cast.data.ballot.data.voter_pseudonym == pseudonym
-                    } else {
-                        false
-                    }
-                });
-            if !found {
+        // No voter pseudonym may have more than one BallotCast bulletin. This
+        // is the property that the old storage/bulletin-board cross-check
+        // protected; now that the bulletin board is the only source of
+        // truth, it's checked directly against the cast bulletins.
+        let mut seen = BTreeSet::new();
+        for b in state.dbb.bulletin_board().get_all_bulletins() {
+            if b.data.contents.type_name() != BALLOT_CAST_BULLETIN {
+                continue;
+            }
+            let Some(pseudonym) = b.data.contents.voter_pseudonym() else {
                 return false;
+            };
+            if !seen.insert(pseudonym) {
+                return false; // duplicate cast bulletin for the same voter
             }
         }
         true
@@ -3211,7 +3171,7 @@ mod tests {
             .bulletin_board()
             .get_all_bulletins()
             .iter()
-            .filter(|b| matches!(b, Bulletin::BallotCast(_)))
+            .filter(|b| b.data.contents.type_name() == BALLOT_CAST_BULLETIN)
             .count();
 
         bb_cast_count >= state.config.num_voters_to_complete

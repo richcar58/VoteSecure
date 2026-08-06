@@ -1,0 +1,143 @@
+// ========================================================================
+// Environment - The development environment necessary to target
+// Platform, including OS, programming, specification, testing, and
+// reasoning toolchains.
+//
+// @dependencies prelude.cfr platform.cfr
+// ========================================================================
+
+// NINJA Tools
+
+abstract BuildTool: Software
+
+Ant: BuildTool
+Bazel: BuildTool
+Cabal: BuildTool
+Gradle: BuildTool
+Make: BuildTool
+Maven: BuildTool
+SCons: BuildTool
+Stack: BuildTool
+cMake: BuildTool
+sbt: BuildTool
+Cargo: BuildTool
+
+abstract PackageManagementTool: Software
+
+Homebrew: PackageManagementTool
+opam: PackageManagementTool
+pip: PackageManagementTool
+npm: PackageManagementTool
+
+abstract PlatformTool: Software
+
+Ansible: PlatformTool
+Docker: PlatformTool
+Kubernetes: PlatformTool
+Terraform: PlatformTool
+
+abstract DevSecOpsTool: Software
+
+BitBucket: DevSecOpsTool
+CircleCI: DevSecOpsTool
+GitHub: DevSecOpsTool
+GitLab: DevSecOpsTool
+Hudson: DevSecOpsTool
+Jenkins: DevSecOpsTool
+TeamCity: DevSecOpsTool
+TravisCI: DevSecOpsTool
+
+abstract or DevTool
+
+Cameo: DevTool
+DOORS: DevTool
+Eclipse: DevTool
+Emacs: DevTool
+Gears: DevTool
+IDEA: DevTool
+jProfiler: DevTool
+MagicDraw: DevTool
+Pandoc: DevTool
+Rational: DevTool
+Sparx: DevTool
+SysMLv2PilotImplementation: DevTool
+VSCode: DevTool
+OmniPlan: DevTool
+Syside: DevTool
+
+abstract FormalMethodsTool
+
+Alloy: FormalMethodsTool
+CPSA: FormalMethodsTool
+CryptoVerif: FormalMethodsTool
+Cryptol: FormalMethodsTool
+CVC: FormalMethodsTool
+FRET: FormalMethodsTool
+FStar: FormalMethodsTool
+Lando: FormalMethodsTool
+ProVerif: FormalMethodsTool
+SAL: FormalMethodsTool
+SAW: FormalMethodsTool
+SPIN: FormalMethodsTool
+Tamarin: FormalMethodsTool
+Z3: FormalMethodsTool
+ACL2s: FormalMethodsTool
+Agda: FormalMethodsTool
+ASMeta: FormalMethodsTool
+BlueCheck: FormalMethodsTool
+CBMC: FormalMethodsTool
+Chocosolver: FormalMethodsTool
+Clafer: FormalMethodsTool
+Coq: FormalMethodsTool
+cvc5: FormalMethodsTool
+CruxMIR: FormalMethodsTool
+CZT: FormalMethodsTool
+DafnyTool: FormalMethodsTool
+EBON: FormalMethodsTool
+Eiffel: FormalMethodsTool
+FDR4: FormalMethodsTool
+FramaC: FormalMethodsTool
+Idris: FormalMethodsTool
+Kani: FormalMethodsTool
+KeY: FormalMethodsTool
+Kind2: FormalMethodsTool
+Lean4: FormalMethodsTool
+mCRL2: FormalMethodsTool
+OpenJML: FormalMethodsTool
+Overture: FormalMethodsTool
+Owl: FormalMethodsTool
+PVS: FormalMethodsTool
+QED: FormalMethodsTool
+RAISE: FormalMethodsTool
+Rodin: FormalMethodsTool
+SCADE: FormalMethodsTool
+TrustInSoft: FormalMethodsTool
+UPPAAL: FormalMethodsTool
+Verdict: FormalMethodsTool
+VeriFast: FormalMethodsTool
+Verus: FormalMethodsTool
+Vest: FormalMethodsTool
+Yices: FormalMethodsTool
+Yosys: FormalMethodsTool
+
+// NINJA Frameworks/Libraries
+abstract Framework: Software
+
+jUnit: Framework
+QuickCheck: Framework
+TestNG: Framework
+PropTest: Framework
+UVM: Framework
+Hypothesis: Framework
+
+abstract Environment
+  software -> Software *
+  frameworks -> Framework *
+
+// We provide an unconfigured instance of each core abstract clafer to
+// permit the typechecker and instance generator to sanity-check our
+// specification for validity and size.  Note that generating this
+// unbound instance takes a significant amount of time and generates
+// a ton of output.
+
+arbitraryEnvironment: Environment

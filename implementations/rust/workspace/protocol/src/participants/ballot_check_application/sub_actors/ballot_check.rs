@@ -35,7 +35,7 @@ use crate::messages::{FwdRandomizerMsg, FwdRandomizerMsgData};
 use crate::messages::{RandomizerMsg, RandomizerMsgData};
 use crate::messages::{SignedBallotMsg, SignedBallotMsgData};
 
-use crate::bulletins::Bulletin;
+use crate::bulletins::{BALLOT_CAST_BULLETIN, BallotCastContents, Bulletin};
 
 use cryptography::utils::serialization::VSerializable;
 
@@ -246,7 +246,7 @@ impl BallotCheckActor {
                     &decrypted_randomizers,
                     &self.election_public_key,
                     &self.election_hash,
-                    &self.ballot.data.voter_pseudonym,
+                    &self.ballot.data.voter_authorization.data.voter_pseudonym,
                 );
 
                 // Check whether ballot decryption was successful.
@@ -279,20 +279,25 @@ impl BallotCheckActor {
 
                 let num_casts = bulletins
                     .iter()
-                    .filter(|b| matches!(b, Bulletin::BallotCast(_)))
+                    .filter(|b| b.data.contents.type_name() == BALLOT_CAST_BULLETIN)
                     .count();
 
                 match (cast_decision, num_casts) {
                     (CastOrNot::Cast, 1) => {
                         // This could be a valid cast, let's get it and check.
-                        let cast_ballot = bulletins
+                        let cast_bulletin = bulletins
                             .iter()
-                            .find(|b| matches!(b, Bulletin::BallotCast(_)));
+                            .find(|b| b.data.contents.type_name() == BALLOT_CAST_BULLETIN);
 
                         // Compare the cast ballot with the one we checked.
-                        match cast_ballot {
-                            Some(Bulletin::BallotCast(bc)) => {
-                                if bc.data.ballot == self.ballot {
+                        match cast_bulletin.and_then(|b| {
+                            b.data
+                                .contents
+                                .as_any()
+                                .downcast_ref::<BallotCastContents>()
+                        }) {
+                            Some(bc) => {
+                                if bc.ballot == self.ballot {
                                     // The cast ballot matches the one we checked.
                                     BallotCheckOutput::Success()
                                 } else {
@@ -303,7 +308,7 @@ impl BallotCheckActor {
                                 }
                             }
 
-                            _ => {
+                            None => {
                                 // This can't happen but we need a match case for it
                                 BallotCheckOutput::Failure("Impossible type error".to_string())
                             }
@@ -432,7 +437,14 @@ impl BallotCheckActor {
 
     /// Check #5: message public key matches ballot submission bulletin key.
     fn check_randomizer_msg_public_key(&self, msg: &RandomizerMsg) -> Result<(), String> {
-        if msg.data.public_key != self.ballot.data.voter_verifying_key {
+        if msg.data.public_key
+            != self
+                .ballot
+                .data
+                .voter_authorization
+                .data
+                .voter_verifying_key
+        {
             Err("public signing key in the randomizer message does not match the voter's public key according to the ballot submission bulletin (tracker)".to_string())
         } else {
             Ok(())
